@@ -25,22 +25,22 @@ typedef struct {
 
 // ---- Element & array type enums ---------------------------------------------
 typedef enum {
-	MIRAGE_FUNCTION,      // head / "function"
-	MIRAGE_I8,	      // signed 8-bit integer
-	MIRAGE_I16,	      // signed 16-bit integer
-	MIRAGE_I32,	      // signed 32-bit integer
-	MIRAGE_I64,	      // signed 64-bit integer
-	MIRAGE_F64,	      // IEEE double-precision real
-	MIRAGE_STRING,	      // utf-8 string
-	MIRAGE_BINSTRING,     // arbitrary binary data
-	MIRAGE_SYMBOL,	      // symbol
-	MIRAGE_BIGINT,	      // big integer (decimal string)
-	MIRAGE_BIGREAL,	      // big real
-	_MIRAGE_PACKEDARRAY,  // packed array (unused, read as numeric)
-	MIRAGE_NUMERICARRAY,  // numeric array (accepts 0xC1 legacy packed)
-	MIRAGE_ASSOCIATION,   // association (key-value)
-	MIRAGE_RULE,	      // ->
-	_MIRAGE_RULE_DELAYED, // :> (: treated as rule -)
+	MIRAGE_FUNCTION,      // "f" head / "function"
+	MIRAGE_I8,	      // "C" signed 8-bit integer
+	MIRAGE_I16,	      // "j" signed 16-bit integer
+	MIRAGE_I32,	      // "i" signed 32-bit integer
+	MIRAGE_I64,	      // "L" signed 64-bit integer
+	MIRAGE_F64,	      // "r" IEEE double-precision real
+	MIRAGE_STRING,	      // "S" utf-8 string
+	MIRAGE_BINSTRING,     // "B" arbitrary binary data
+	MIRAGE_SYMBOL,	      // "s" symbol
+	MIRAGE_BIGINT,	      // "I" big integer (decimal string)
+	MIRAGE_BIGREAL,	      // "R" big real
+	_MIRAGE_PACKEDARRAY,  // "Á" packed array (unused, read as numeric)
+	MIRAGE_NUMERICARRAY,  // "Â" numeric array (accepts 0xC1 legacy packed)
+	MIRAGE_ASSOCIATION,   // "A" association (key-value)
+	MIRAGE_RULE,	      // "-" ->
+	_MIRAGE_RULE_DELAYED, // ":" :> (: treated as rule -)
 } mirage_element_type;
 
 // Element values:
@@ -83,8 +83,8 @@ typedef enum {
 } mirage_error;
 
 // ---- Setup/teardown ---------------------------------------------------------
-mirage_msg *mirage_create(i64 buffer_size, void *(*alloc)(size_t) = 0);
-void mirage_destroy(mirage_msg **msg, void (*dealloc)(void *) = 0);
+mirage_msg *mirage_create(i64 buffer_size, void *(*alloc)(size_t));
+void mirage_destroy(mirage_msg **msg, void (*dealloc)(void *));
 
 // ---- Write ------------------------------------------------------------------
 i64 mirage_write_start(mirage_msg *msg);
@@ -122,6 +122,9 @@ i64 mirage_read_numericarray(mirage_msg *msg, mirage_array_type *array_type,
 			     i64 *rank, i64 *dims, i64 max_rank, void *data, i64 max_bytes);
 i64 mirage_read_association(mirage_msg *msg, i64 *length);
 i64 mirage_read_assoc_rule(mirage_msg *msg);
+
+// --- Advance the cursor past the next object ---------------------------------
+i64 mirage_next(mirage_msg *msg);
 
 // ---- Peek utilities (do not advance cursor) ---------------------------------
 i64 mirage_peek_element_type(mirage_msg *msg, mirage_element_type *e);

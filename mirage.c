@@ -38,7 +38,7 @@ static inline i64 __builtin_mul_overflow(i64 x, i64 y, i64 *out) {
 	}
 	i64 y_approx = 1;
 	i8 log2_y = 1;
-	for(; log2_y <= 63 && y_approx < y; ++log2_y) {
+	for(; log2_y < 63 && y_approx < y; ++log2_y) {
 		y_approx <<= 1;
 	}
 	if(x > (INT64_MAX >> log2_y)) {

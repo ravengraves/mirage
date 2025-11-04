@@ -35,7 +35,7 @@ const u8 mirage_array_type_size[12] = {1, 2, 4, 8, 1, 2, 4, 8, 4, 8, 8, 16};
 // 	}
 // 	i16 y_approx = 1;
 // 	i8 log2_y=1;
-// 	for(;log2_y <= 15 && y_approx < y; ++log2_y){
+// 	for(;log2_y < 15 && y_approx < y; ++log2_y){
 // 		y_approx <<= 1;
 // 	}
 // 	if(x > ((0x7FFF) >> log2_y)) {
