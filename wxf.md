@@ -1,15 +1,12 @@
-# WXF Format
+## WXF 🐺
 
-## Introduction
-WXF is a standardized binary data format (we are using version 1.0 of WXF). 
-It supports encoding of several general datatypes commonly used in engineering and robotics applications. 
+### Introduction
+[Wolfram Exchange Foramt / "WXF"](https://reference.wolfram.com/language/ref/format/WXF.html) is a [well-designed binary data format](https://reference.wolfram.com/language/tutorial/WXFFormatDescription.html) developed in 2017 by Wolfram Research. (we are using version 1.0 of WXF).
+
+It supports encoding of several general datatypes commonly used in engineering and robotics applications.
 It is also very efficient, as a binary format.
 
-The goal is to put this format on all of our microcontrollers and sensor drivers so we can automatically discover and interface with any robotics devices in our system.
-
-Additionally, we want to support easy visualization of data in this format.
-
-## BNF
+### BNF
 Here is a grammar for the WXF format. It is meant to be a reference for implementations.
 
 ```bnf
@@ -117,15 +114,15 @@ Fun examples:
 <unit> := <utf-8>  # e.g. "m/s"
 ```
 
-## Header Start
+### Header Start
 
 For version 1.0 of WXF format (which we are using), the correct header start value is the character "8", or an integer value of 56.
 
-## Compression
+### Compression
 
 If the `<sequence>` is compressed with zip (zlib), the header is "8C". Otherwise, the header is just "8".
 
-## Element Type Table
+### Element Type Table
 
 | Integer | Hex  | Character (ISO8859-1) | Type                         |
 | ------- | ---- |---------------------|------------------------------|
@@ -146,7 +143,7 @@ If the `<sequence>` is compressed with zip (zlib), the header is "8C". Otherwise
 | 58      | 0x3A | :                   | Association Delayed Rule     |
 | 45      | 0x2D | -                   | Association Rule             |
 
-## Varints
+### Varints
 
 Variable length integers are encoded such that every byte except the last has its MSB set. This is accomplished by shifting each byte of the number right one and using the first bit of the byte to indicate the varint continues and using only the final 7 bits of each byte for the original number. Additionally, the number is encoded such that the lowest 7 bits is stored in the first varint message index.
 
@@ -160,7 +157,7 @@ Here is an example:
 (decoded) = b0000000100000001 = 257
 ```
 
-## Numeric Array Type Table
+### Numeric Array Type Table
 
 | Integer | Hexadecimal | Array Type                        |
 | ------- | ----------- | --------------------------------- |
@@ -177,7 +174,7 @@ Here is an example:
 | 51      | 0x33        | IEEE-754 single-precision complex |
 | 52      | 0x34        | IEEE-754 double-precision complex |
 
-## Packed Array Type Table
+### Packed Array Type Table
 
 | Integer | Hexadecimal | Array Type                        |
 | ------- | ----------- | --------------------------------- |

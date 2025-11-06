@@ -1,13 +1,15 @@
 // mirage+embedded.c — Portable embedded/big-endian safe implementation.
 // Always encodes/decodes little-endian on the wire via explicit byte shifts.
+// This implementation also limits message sizes to 32,767 bytes  and uses
+//  16-bit integer math for reduced footprint on microcontrollers.
+
 #include "mirage.h"
 #include <stdlib.h>
-// #include <string.h>
 
 
 // ---- Encoding tables --------------------------------------------------------
 const u8 mirage_element_type_encoding[16] = {'f', 'C', 'j', 'i', 'L', 'r',
-					     'S', 'B', 's', 'I', 'R', 0xC1, 0xC2, 'A', '-', ':'};
+					     'S', 'B', 's', 'I', 'R', 0xC1, 0xC2, 'A', ':', '-'};
 const u8 mirage_array_type_encoding[12] = {0x0, 0x1, 0x2, 0x3, 0x10, 0x11,
 					   0x12, 0x13, 0x22, 0x23, 0x33, 0x34};
 const u8 mirage_array_type_size[12] = {1, 2, 4, 8, 1, 2, 4, 8, 4, 8, 8, 16};
@@ -56,6 +58,7 @@ static inline void fast_memcpy(u8 *RESTRICT dest, const u8 *RESTRICT src, u16 n)
 static inline int _need_(mirage_msg *m, i64 n) { // check n <= remaining
 	return (n <= m->length - m->cursor);
 }
+
 static inline i16 _varu_size_(u16 v) {
 	i16 n = 0;
 	do {
@@ -64,6 +67,7 @@ static inline i16 _varu_size_(u16 v) {
 	} while(v > 0);
 	return n;
 }
+
 static inline i16 _write_varu_(mirage_msg *m, u16 v) {
 	do {
 		m->data[m->cursor] = (i8) ((v & 0x7F) | 0x80);
@@ -106,6 +110,7 @@ static inline void _w16le_(mirage_msg *m, u16 v) {
 	m->data[m->cursor + 1] = (u8) ((v >> 8) & 0xFF);
 	m->cursor += 2;
 }
+
 static inline void _w32le_(mirage_msg *m, u32 v) {
 	m->data[m->cursor + 0] = (u8) ((v >> 0) & 0xFF);
 	m->data[m->cursor + 1] = (u8) ((v >> 8) & 0xFF);
@@ -113,6 +118,7 @@ static inline void _w32le_(mirage_msg *m, u32 v) {
 	m->data[m->cursor + 3] = (u8) ((v >> 24) & 0xFF);
 	m->cursor += 4;
 }
+
 static inline void _w64le_(mirage_msg *m, u64 v) {
 	m->data[m->cursor + 0] = (u8) ((v >> 0) & 0xFF);
 	m->data[m->cursor + 1] = (u8) ((v >> 8) & 0xFF);
@@ -124,28 +130,56 @@ static inline void _w64le_(mirage_msg *m, u64 v) {
 	m->data[m->cursor + 7] = (u8) ((v >> 56) & 0xFF);
 	m->cursor += 8;
 }
+
 static inline void _r16le_(mirage_msg *m, u16 *v) {
-	*v = ((u16) (u8) m->data[m->cursor + 0] << 0) | ((u16) (u8) m->data[m->cursor + 1] << 8);
+	if(v) {
+		*v = ((u16) (u8) m->data[m->cursor + 0] << 0)
+				| ((u16) (u8) m->data[m->cursor + 1] << 8);
+	}
 	m->cursor += 2;
 }
+
 static inline void _r32le_(mirage_msg *m, u32 *v) {
-	*v = ((u32) (u8) m->data[m->cursor + 0] << 0) | ((u32) (u8) m->data[m->cursor + 1] << 8) | ((u32) (u8) m->data[m->cursor + 2] << 16) | ((u32) (u8) m->data[m->cursor + 3] << 24);
+	if(v) {
+		*v = ((u32) (u8) m->data[m->cursor + 0] << 0)
+				| ((u32) (u8) m->data[m->cursor + 1] << 8)
+				| ((u32) (u8) m->data[m->cursor + 2] << 16)
+				| ((u32) (u8) m->data[m->cursor + 3] << 24);
+	}
 	m->cursor += 4;
 }
+
 static inline void _r64le_(mirage_msg *m, u64 *v) {
-	*v = ((u64) (u8) m->data[m->cursor + 0] << 0) | ((u64) (u8) m->data[m->cursor + 1] << 8) | ((u64) (u8) m->data[m->cursor + 2] << 16) | ((u64) (u8) m->data[m->cursor + 3] << 24) | ((u64) (u8) m->data[m->cursor + 4] << 32) | ((u64) (u8) m->data[m->cursor + 5] << 40) | ((u64) (u8) m->data[m->cursor + 6] << 48) | ((u64) (u8) m->data[m->cursor + 7] << 56);
+	if(v) {
+		*v = ((u64) (u8) m->data[m->cursor + 0] << 0)
+				| ((u64) (u8) m->data[m->cursor + 1] << 8)
+				| ((u64) (u8) m->data[m->cursor + 2] << 16)
+				| ((u64) (u8) m->data[m->cursor + 3] << 24)
+				| ((u64) (u8) m->data[m->cursor + 4] << 32)
+				| ((u64) (u8) m->data[m->cursor + 5] << 40)
+				| ((u64) (u8) m->data[m->cursor + 6] << 48)
+				| ((u64) (u8) m->data[m->cursor + 7] << 56);
+	}
 	m->cursor += 8;
+}
+
+static inline i16 _strlen_(char *str) {
+	i16 i = 0;
+	while(str[i] != 0) {
+		i += 1;
+	}
+	return i;
 }
 
 // ---- Create/Destroy ---------------------------------------------------------
 mirage_msg *mirage_create(i64 buffer_size, void *(*alloc)(size_t)) {
 	if(buffer_size > INT16_MAX) { // constrain for embedded
-		return NULL;
+		return 0;
 	}
 	void *(*allocate)(size_t) = alloc ? (void *(*) (size_t)) alloc : malloc;
 	mirage_msg *m = (mirage_msg *) allocate(sizeof(mirage_msg) + (size_t) buffer_size);
 	if(!m) {
-		return NULL;
+		return 0;
 	}
 	m->length = buffer_size;
 	m->cursor = 0;
@@ -155,7 +189,7 @@ mirage_msg *mirage_create(i64 buffer_size, void *(*alloc)(size_t)) {
 }
 
 void mirage_destroy(mirage_msg **m, void (*dealloc)(void *)) {
-	void (*deallocate)(void *) = dealloc ? (void (*)(void *)) dealloc : free;
+	void (*deallocate)(void *) = dealloc ? dealloc : free;
 	if(*m) {
 		deallocate(*m);
 	}
@@ -172,13 +206,14 @@ i64 mirage_write_start(mirage_msg *m) {
 	m->cursor = 2;
 	return 2;
 }
-static inline i64 _write_buf_(mirage_msg *m, const i8 *buf, i64 len, i8 tag) {
-	u64 need = 1 + _varu_size_((u16) len) + len;
-	if(need > m->length - m->cursor) {
-		return -2;
+
+static i64 _write_buf_(mirage_msg *m, const i8 *buf, i64 len, i8 tag) {
+	if(len > INT16_MAX || len < 0) {
+		return -4;
 	}
-	if(len > INT16_MAX) {
-		return -3;
+	i16 need = 1 + _varu_size_((u16) len) + len;
+	if(need > (i16) m->length - (i16) m->cursor) {
+		return -2;
 	}
 	_w8_(m, (u8) tag);
 	_write_varu_(m, (u16) len);
@@ -186,20 +221,25 @@ static inline i64 _write_buf_(mirage_msg *m, const i8 *buf, i64 len, i8 tag) {
 	m->cursor += len; // raw copy of bytes
 	return need;
 }
+
 i64 mirage_write_fn(mirage_msg *m, char *name, i64 nlen, i64 argc) {
-	i64 start = m->cursor;
-	i64 worst = 1 + _varu_size_((u16) argc) + 1 + _varu_size_((u16) nlen) + nlen;
-	if(worst > m->length - m->cursor) {
-		return -2;
+	if(argc > INT16_MAX || nlen > INT16_MAX || argc < 0 || nlen < -1) {
+		return -4;
 	}
-	if(argc > INT16_MAX || nlen > INT16_MAX) {
-		return -3;
+	if(nlen == -1) {
+		nlen = _strlen_(name);
+	}
+	i16 s = m->cursor;
+	i16 need = 1 + _varu_size_((u16) argc) + 1 + _varu_size_((u16) nlen) + nlen;
+	if(need > (i16) m->length - (i16) m->cursor) {
+		return -2;
 	}
 	_w8_(m, 'f');
 	_write_varu_(m, (u16) argc);
 	_write_buf_(m, (i8 *) name, nlen, 's');
-	return m->cursor - start;
+	return m->cursor - s;
 }
+
 i64 mirage_write_i8(mirage_msg *m, i8 v) {
 	if(!_need_(m, 2)) {
 		return -2;
@@ -208,6 +248,7 @@ i64 mirage_write_i8(mirage_msg *m, i8 v) {
 	_w8_(m, (u8) v);
 	return 2;
 }
+
 i64 mirage_write_i16(mirage_msg *m, i16 v) {
 	if(!_need_(m, 3)) {
 		return -2;
@@ -216,6 +257,7 @@ i64 mirage_write_i16(mirage_msg *m, i16 v) {
 	_w16le_(m, (u16) v);
 	return 3;
 }
+
 i64 mirage_write_i32(mirage_msg *m, i32 v) {
 	if(!_need_(m, 5)) {
 		return -2;
@@ -224,6 +266,7 @@ i64 mirage_write_i32(mirage_msg *m, i32 v) {
 	_w32le_(m, (u32) v);
 	return 5;
 }
+
 i64 mirage_write_i64(mirage_msg *m, i64 v) {
 	if(!_need_(m, 9)) {
 		return -2;
@@ -232,6 +275,7 @@ i64 mirage_write_i64(mirage_msg *m, i64 v) {
 	_w64le_(m, (u64) v);
 	return 9;
 }
+
 i64 mirage_write_f64(mirage_msg *m, f64 v) {
 	if(!_need_(m, 9)) {
 		return -2;
@@ -245,39 +289,50 @@ i64 mirage_write_f64(mirage_msg *m, f64 v) {
 	_w64le_(m, u.i);
 	return 9;
 }
+
 i64 mirage_write_string(mirage_msg *m, char *v, i64 l) {
+	if(l == -1) {
+		l = _strlen_(v);
+	}
 	return _write_buf_(m, (i8 *) v, l, 'S');
 }
+
 i64 mirage_write_bin(mirage_msg *m, i8 *d, i64 l) {
 	return _write_buf_(m, d, l, 'B');
 }
+
 i64 mirage_write_sym(mirage_msg *m, char *n, i64 l) {
+	if(l == -1) {
+		l = _strlen_(n);
+	}
 	return _write_buf_(m, (i8 *) n, l, 's');
 }
+
 i64 mirage_write_bigint(mirage_msg *m, char *v, i64 l) {
 	return _write_buf_(m, (i8 *) v, l, 'I');
 }
+
 i64 mirage_write_bigreal(mirage_msg *m, char *v, i64 l) {
 	return _write_buf_(m, (i8 *) v, l, 'R');
 }
 
 i64 mirage_write_numericarray(mirage_msg *m, mirage_array_type t, i64 rank, i64 *dims, void *data) {
 	if(rank < 0 || rank > INT16_MAX) {
-		return -3;
+		return -4;
 	}
 	i16 elems = 1;
 	i16 dv = 0;
 	for(i16 i = 0; i < rank; ++i) {
 		i16 new_elems;
 		if(dims[i] > INT16_MAX || dims[0] < 0 || __builtin_mul_overflow(elems, (i16) dims[i], &new_elems)) {
-			return -3;
+			return -4;
 		}
 		elems = new_elems;
 		dv += _varu_size_((u16) dims[i]);
 	}
 	i16 bytes;
 	if(__builtin_mul_overflow(elems, mirage_array_type_size[t], &bytes)) {
-		return -3;
+		return -4;
 	}
 	i64 need = 1 + 1 + _varu_size_((u16) rank) + dv + bytes;
 	if(need > m->length - m->cursor) {
@@ -330,9 +385,27 @@ i64 mirage_write_numericarray(mirage_msg *m, mirage_array_type t, i64 rank, i64 
 		break;
 	}
 	default:
-		return -3;
+		return -4;
 	}
 	return need;
+}
+
+i64 mirage_write_association(mirage_msg *m, i64 len) {
+	i16 need = 1 + _varu_size_(len);
+	if(!_need_(m, need)) {
+		return -2;
+	}
+	_w8_(m, 'A');
+	_write_varu_(m, (u64) len);
+	return 1 + need;
+}
+
+i64 mirage_write_assoc_rule(mirage_msg *m) {
+	if(!_need_(m, 1)) {
+		return -2;
+	}
+	_w8_(m, '-');
+	return 1;
 }
 
 // ---- Read -------------------------------------------------------------------
@@ -360,8 +433,8 @@ i64 mirage_read_fn(mirage_msg *m, char *name, i64 *nlen, i64 nmax, i64 *argc) {
 	if(m->data[m->cursor] != 'f') {
 		return -1;
 	}
-	if(nmax > 0 || nmax > INT16_MAX) {
-		return -3;
+	if(nmax > INT16_MAX) {
+		return -4;
 	}
 	m->cursor++;
 	u16 a = 0;
@@ -387,13 +460,16 @@ i64 mirage_read_fn(mirage_msg *m, char *name, i64 *nlen, i64 nmax, i64 *argc) {
 	}
 	if(L > (u16) nmax || L > (u16) m->length - (u16) m->cursor) {
 		m->cursor = s;
-		return -3;
+		return -4;
 	}
-	fast_memcpy((u8 *) name, (u8 *) m->data + m->cursor, L);
+	if(nmax > 0) {
+		fast_memcpy((u8 *) name, (u8 *) m->data + m->cursor, L);
+	}
 	m->cursor += (i16) L;
 	*nlen = (i16) L;
 	return m->cursor - s;
 }
+
 i64 mirage_read_i8(mirage_msg *m, i8 *v) {
 	if(m->cursor + 2 > m->length) {
 		return -2;
@@ -405,6 +481,7 @@ i64 mirage_read_i8(mirage_msg *m, i8 *v) {
 	m->cursor += 2;
 	return 2;
 }
+
 i64 mirage_read_i16(mirage_msg *m, i16 *v) {
 	if(m->cursor + 3 > m->length) {
 		return -2;
@@ -416,6 +493,7 @@ i64 mirage_read_i16(mirage_msg *m, i16 *v) {
 	_r16le_(m, (u16 *) v);
 	return 3;
 }
+
 i64 mirage_read_i32(mirage_msg *m, i32 *v) {
 	if(m->cursor + 5 > m->length) {
 		return -2;
@@ -427,6 +505,7 @@ i64 mirage_read_i32(mirage_msg *m, i32 *v) {
 	_r32le_(m, (u32 *) v);
 	return 5;
 }
+
 i64 mirage_read_i64(mirage_msg *m, i64 *v) {
 	if(m->cursor + 9 > m->length) {
 		return -2;
@@ -438,6 +517,7 @@ i64 mirage_read_i64(mirage_msg *m, i64 *v) {
 	_r64le_(m, (u64 *) v);
 	return 9;
 }
+
 i64 mirage_read_f64(mirage_msg *m, f64 *v) {
 	if(m->cursor + 9 > m->length) {
 		return -2;
@@ -454,6 +534,7 @@ i64 mirage_read_f64(mirage_msg *m, f64 *v) {
 	*v = u.d;
 	return 9;
 }
+
 static i64 _read_buf_(mirage_msg *m, i8 *dst, i64 *len, i64 max, i8 tag) {
 	i64 s = m->cursor;
 	if(m->cursor >= m->length) {
@@ -472,33 +553,49 @@ static i64 _read_buf_(mirage_msg *m, i8 *dst, i64 *len, i64 max, i8 tag) {
 		m->cursor = s;
 		return -1;
 	}
-	fast_memcpy((u8 *) dst, (u8 *) m->data + m->cursor, L);
+	if(max > 0) {
+		fast_memcpy((u8 *) dst, (u8 *) m->data + m->cursor, L);
+	}
 	m->cursor += (i16) L;
 	*len = (i16) L;
 	return m->cursor - s;
 }
+
 i64 mirage_read_string(mirage_msg *m, char *dst, i64 *l, i64 max) {
 	return _read_buf_(m, (i8 *) dst, l, max, 'S');
 }
+
 i64 mirage_read_bin(mirage_msg *m, i8 *dst, i64 *l, i64 max) {
 	return _read_buf_(m, dst, l, max, 'B');
 }
+
 i64 mirage_read_sym(mirage_msg *m, char *dst, i64 *l, i64 max) {
 	return _read_buf_(m, (i8 *) dst, l, max, 's');
 }
+
 i64 mirage_read_bigint(mirage_msg *m, char *dst, i64 *l, i64 max) {
 	return _read_buf_(m, (i8 *) dst, l, max, 'I');
 }
+
 i64 mirage_read_bigreal(mirage_msg *m, char *dst, i64 *l, i64 max) {
 	return _read_buf_(m, (i8 *) dst, l, max, 'R');
 }
 
 i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 			     i64 *dims, i64 max_rank, void *data, i64 max_bytes) {
+	i8 skip = 0;
+	if(max_rank == -1 || max_bytes == -1) {
+		skip = 1;
+	} else {
+		if(!rank || !data || max_rank < -1 || max_bytes < -1) {
+			return -4;
+		}
+	}
 
 	// Validate inputs are within i16 range
-	if(m->cursor > 32766 || m->length > 32766 || max_rank > 32766 || max_bytes > INT16_MAX || !data || !dims || max_bytes == 0) {
-		return -3;
+	if(m->cursor > 32766 || m->length > 32766 || max_rank > 32766
+	   || max_bytes > INT16_MAX) {
+		return -4;
 	}
 
 	i16 length = (i16) m->length;
@@ -544,9 +641,9 @@ i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 		m->cursor = s;
 		return -2;
 	}
-	if(r > (u64) rmax) {
+	if(r > (u16) rmax) {
 		m->cursor = s;
-		return -3;
+		return -4;
 	}
 	*rank = (i64) r;
 	i16 r16 = (i16) r;
@@ -562,7 +659,9 @@ i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 			m->cursor = s;
 			return -2;
 		}
-		dims[i] = (i64) d;
+		if(!skip) {
+			dims[i] = (i64) d;
+		}
 
 		i16 new_elems;
 		if(__builtin_mul_overflow(elems, (i16) d, &new_elems)) {
@@ -588,7 +687,9 @@ i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 	switch(*t) {
 	case MIRAGE_ARRAY_I8:
 	case MIRAGE_ARRAY_U8:
-		fast_memcpy((u8 *) data, (u8 *) m->data + m->cursor, (u16) bytes);
+		if(!skip) {
+			fast_memcpy((u8 *) data, (u8 *) m->data + m->cursor, (u16) bytes);
+		}
 		m->cursor += bytes;
 		break;
 
@@ -596,7 +697,8 @@ i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 	case MIRAGE_ARRAY_U16: {
 		u16 *p = (u16 *) data;
 		for(i16 i = 0; i < elems; ++i) {
-			_r16le_(m, p + i);
+			u16 *idx = skip ? 0 : p + i;
+			_r16le_(m, idx);
 		}
 		break;
 	}
@@ -609,7 +711,8 @@ i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 	case MIRAGE_ARRAY_F32: {
 		u32 *p = (u32 *) data;
 		for(i16 i = 0; i < elems; ++i) {
-			_r32le_(m, p + i);
+			u32 *idx = skip ? 0 : p + i;
+			_r32le_(m, idx);
 		}
 		break;
 	}
@@ -622,7 +725,8 @@ i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 	case MIRAGE_ARRAY_F64: {
 		u64 *p = (u64 *) data;
 		for(i16 i = 0; i < elems; ++i) {
-			_r64le_(m, p + i);
+			u64 *idx = skip ? 0 : p + i;
+			_r64le_(m, idx);
 		}
 		break;
 	}
@@ -653,6 +757,8 @@ i64 mirage_read_association(mirage_msg *m, i64 *len) {
 	*len = (i16) L;
 	return m->cursor - s;
 }
+
+
 i64 mirage_read_assoc_rule(mirage_msg *m) {
 	if(m->cursor >= m->length) {
 		return -2;
@@ -680,49 +786,3 @@ i64 mirage_peek_element_type(mirage_msg *m, mirage_element_type *e) {
 	}
 	return -1;
 }
-
-// maybe better parsing speed for some processors
-// 45	"-"	rule in association
-// 58	":"	delayed rule in association
-// 65	"A"	association
-// 66	"B"	binary string
-// 67	"C"	signed 8-bit integer
-// 73	"I"	big integer
-// 76	"L"	signed 64-bit integer
-// 82	"R"	big real
-// 83	"S"	string
-// 102	"f"	function
-// 105	"i"	signed 32-bit integer
-// 106	"j"	signed 16-bit integer
-// 114	"r"	IEEE double-precision real
-// 115	"s"	symbol
-// 193	"Á"	packed array
-// 194	"Â"	numeric array
-
-// int peek_element_type(const mirage_msg* m, mirage_element_type* out) {
-// 	u64 pos = m->cursor;
-// 	if (pos >= m->length) return -2;
-// 	unsigned c = m->data[pos];
-// 	if (c < 102) {
-// 		if (c < 66) {
-// 			if (c == '-' || c == ':') {*out = MIRAGE_RULE; return 0;}
-// 		} else {
-// 			if (c == 'L') { *out = MIRAGE_I64; return 0; }
-// 			if (c == 'S') { *out = MIRAGE_STRING; return 0; }
-// 			if (c == 'B') { *out = MIRAGE_BINSTRING; return 0; }
-// 			if (c == 'A') { *out = MIRAGE_ASSOCIATION; return 0; }
-// 			if (c == 'C') { *out = MIRAGE_I8; return 0; }
-// 			if (c == 'I') { *out = MIRAGE_BIGINT; return 0; }
-// 			if (c == 'R') { *out = MIRAGE_BIGREAL; return 0; }
-// 		}
-// 	} else if (c < 128) {
-// 		if (c == 'f') { *out = MIRAGE_FUNCTION; return 0; }
-// 		if (c == 'r') { *out = MIRAGE_F64; return 0; }
-// 		if (c == 's') { *out = MIRAGE_SYMBOL; return 0; }
-// 		if (c == 'j') { *out = MIRAGE_I16; return 0; }
-// 		if (c == 'i') { *out = MIRAGE_I32; return 0; }
-// 	} else {
-// 		if (c == 194 || c == 193) {*out = MIRAGE_NUMERICARRAY; return 0;}
-// 	}
-// 	return -1;
-// }

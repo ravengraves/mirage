@@ -25,41 +25,23 @@ typedef struct {
 
 // ---- Element & array type enums ---------------------------------------------
 typedef enum {
-	MIRAGE_FUNCTION,      // "f" head / "function"
-	MIRAGE_I8,	      // "C" signed 8-bit integer
-	MIRAGE_I16,	      // "j" signed 16-bit integer
-	MIRAGE_I32,	      // "i" signed 32-bit integer
-	MIRAGE_I64,	      // "L" signed 64-bit integer
-	MIRAGE_F64,	      // "r" IEEE double-precision real
-	MIRAGE_STRING,	      // "S" utf-8 string
-	MIRAGE_BINSTRING,     // "B" arbitrary binary data
-	MIRAGE_SYMBOL,	      // "s" symbol
-	MIRAGE_BIGINT,	      // "I" big integer (decimal string)
-	MIRAGE_BIGREAL,	      // "R" big real
-	_MIRAGE_PACKEDARRAY,  // "Á" packed array (unused, read as numeric)
-	MIRAGE_NUMERICARRAY,  // "Â" numeric array (accepts 0xC1 legacy packed)
-	MIRAGE_ASSOCIATION,   // "A" association (key-value)
-	MIRAGE_RULE,	      // "-" ->
-	_MIRAGE_RULE_DELAYED, // ":" :> (: treated as rule -)
+	MIRAGE_FUNCTION,      // 102 "f" head / "function"
+	MIRAGE_I8,	      // 67 "C" signed 8-bit integer
+	MIRAGE_I16,	      // 106 "j" signed 16-bit integer
+	MIRAGE_I32,	      // 105 "i" signed 32-bit integer
+	MIRAGE_I64,	      // 76 "L" signed 64-bit integer
+	MIRAGE_F64,	      // 114 "r" IEEE double-precision real
+	MIRAGE_STRING,	      // 83 "S" utf-8 string
+	MIRAGE_BINSTRING,     // 66 "B" arbitrary binary data
+	MIRAGE_SYMBOL,	      // 115 "s" symbol
+	MIRAGE_BIGINT,	      // 73 "I" big integer (decimal string)
+	MIRAGE_BIGREAL,	      // 82 "R" big real
+	_MIRAGE_PACKEDARRAY,  // 193 "Á" packed array (unused, read as numeric)
+	MIRAGE_NUMERICARRAY,  // 194 "Â" numeric array (accepts 0xC1 legacy packed)
+	MIRAGE_ASSOCIATION,   // 65 "A" association (key-value)
+	_MIRAGE_RULE_DELAYED, // 58 ":" :> (: treated as rule -)
+	MIRAGE_RULE,	      // 45 "-" ->
 } mirage_element_type;
-
-// Element values:
-// 102	"f"	function
-// 67	"C"	signed 8-bit integer
-// 106	"j"	signed 16-bit integer
-// 105	"i"	signed 32-bit integer
-// 76	"L"	signed 64-bit integer
-// 114	"r"	IEEE double-precision real
-// 83	"S"	string
-// 66	"B"	binary string
-// 115	"s"	symbol
-// 73	"I"	big integer
-// 82	"R"	big real
-// 193	"Á"	packed array
-// 194	"Â"	numeric array
-// 65	"A"	association
-// 58	":"	delayed rule in association
-// 45	"-"	rule in association
 
 typedef enum {
 	MIRAGE_ARRAY_I8,
@@ -76,10 +58,12 @@ typedef enum {
 	MIRAGE_ARRAY_C64
 } mirage_array_type;
 
+
+// return values
 typedef enum {
 	MIRAGE_ERR_BADDATA = -1,
 	MIRAGE_ERR_BUFFERSIZE = -2,
-	MIRAGE_ERR_BADINPUT = -3,
+	MIRAGE_ERR_BADINPUT = -4,
 } mirage_error;
 
 // ---- Setup/teardown ---------------------------------------------------------
@@ -105,6 +89,7 @@ i64 mirage_write_association(mirage_msg *msg, i64 length);
 i64 mirage_write_assoc_rule(mirage_msg *msg);
 
 // ---- Read -------------------------------------------------------------------
+// passing length = -1 will cause read functions to not copy string/buffer data
 i64 mirage_read_start(mirage_msg *msg);
 i64 mirage_read_fn(mirage_msg *msg, char *name, i64 *name_length,
 		   i64 max_name_length, i64 *argc);
@@ -113,7 +98,7 @@ i64 mirage_read_i16(mirage_msg *msg, i16 *value);
 i64 mirage_read_i32(mirage_msg *msg, i32 *value);
 i64 mirage_read_i64(mirage_msg *msg, i64 *value);
 i64 mirage_read_f64(mirage_msg *msg, f64 *value);
-i64 mirage_read_str(mirage_msg *msg, i8 *value, i64 *length, i64 max_length);
+i64 mirage_read_string(mirage_msg *msg, char *value, i64 *length, i64 max_length);
 i64 mirage_read_bin(mirage_msg *msg, i8 *data, i64 *length, i64 max_length);
 i64 mirage_read_sym(mirage_msg *msg, char *name, i64 *name_length, i64 max_length);
 i64 mirage_read_bigint(mirage_msg *msg, char *value, i64 *length, i64 max_length);
