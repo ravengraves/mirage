@@ -1,9 +1,9 @@
 //  test.c – small demo that writes/reads a WXF function.
 #include "mirage.h"
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 
 int main(void) {
 	// ------ 1. Allocate message buffer (1024 bytes) ----------------------
@@ -21,11 +21,11 @@ int main(void) {
 	// 4. f32 array 72.0 (scalar)
 	// 5. f64 42.0
 	i64 err = mirage_write_start(msg); // Write message start
-	err |= mirage_write_fn(msg, "List",
-			       sizeof("List")-1, 5); // function header
-	err |= mirage_write_i8(msg, 7);		   // First argument
+        err |= mirage_write_fn(msg, "List", sizeof("List") - 1,
+                               5);                     // function header
+        err |= mirage_write_i8(msg, 7);		       // First argument
 	err |= mirage_write_string(msg, "Hello World!",
-				   sizeof("Hello World!")-1); // Second argument
+				   sizeof("Hello World!") - 1); // Second argument
 
 	// Third argument – numeric array (3 i32 values)
 	i32 arr[3] = {1, 2, 3};

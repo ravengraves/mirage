@@ -7,7 +7,8 @@ CFLAGS := -Wall -Wextra -Wpedantic -Werror -std=c11 -fPIC -flto \
 	-ffunction-sections -fdata-sections \
 	-fno-stack-protector -D_FORTIFY_SOURCE=0 \
 	-I . -O3 -mtune=native
-LDFLAGS := -flto
+CEXE := -fuse-ld=lld -Wl,-gc-sections,-icf=safe,-s
+LDFLAGS := -flto -fuse-ld=lld
 
 # arduino version: TARGET=embedded
 ifeq ($(TARGET),embedded)
@@ -27,7 +28,7 @@ endif
 all: build/libmirage.so build/libmirage.a
 
 build/libmirage.so: build/mirage.o
-	$(CC) -shared -o build/libmirage.so build/mirage.o -fuse-ld=lld $(LDFLAGS)
+	$(CC) -shared -o build/libmirage.so build/mirage.o $(LDFLAGS)
 
 build/libmirage.a: build/mirage.o
 	$(AR) rcs build/libmirage.a build/mirage.o
@@ -37,14 +38,14 @@ build/mirage.o: $(SOURCE)
 	$(CC) -c $(CFLAGS) $(SOURCE) -o build/mirage.o
 
 build/test: test.c build/libmirage.a
-	$(CC) $(CFLAGS) -o build/test test.c build/libmirage.a -fuse-ld=lld -Wl,-gc-sections,-s # -fsanitize=address,undefined
+	$(CC) $(CFLAGS) $(CEXE) -o build/test test.c build/libmirage.a # -fsanitize=address,undefined
 
 compile_commands.json: Makefile
 	@echo '[\n' \
 	'{"directory":"$(PWD)","command":"$(CC) -c $(CFLAGS) $(SOURCE) -o build/mirage.o","file":"$(SOURCE)"},\n' \
 	'{"directory":"$(PWD)","command":"$(CC) -shared -o build/libmirage.so build/mirage.o $(LDFLAGS)","file":"build/libmirage.so"},\n' \
 	'{"directory":"$(PWD)","command":"$(AR) rcs build/libmirage.a build/mirage.o","file":"build/libmirage.a"},\n' \
-	'{"directory":"$(PWD)","command":"$(CC) $(CFLAGS) -o build/test test.c build/libmirage.a -fuse-ld=lld -Wl,-gc-sections,-icf=safe","file":"test.c"}\n]' \
+	'{"directory":"$(PWD)","command":"$(CC) $(CFLAGS) $(CEXE) -o build/test test.c build/libmirage.a -fuse-ld=lld -Wl,-gc-sections,-icf=safe","file":"test.c"}\n]' \
 	> $@
 
 install:

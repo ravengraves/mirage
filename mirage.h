@@ -58,7 +58,6 @@ typedef enum {
 	MIRAGE_ARRAY_C64
 } mirage_array_type;
 
-
 // return values
 typedef enum {
 	MIRAGE_ERR_BADDATA = -1,

@@ -1,23 +1,20 @@
 # Mirage 🔮
 Mirage is a serialization/deserialization library using [a flexible binary self-describing data format](wxf.md) for transmitting robot thoughts.
 
-## WXF Data Format
+## WXF Data Format 🖼
 This library encodes and decodes "Wolfram Exchange Format" / "WXF", a data format developed in 2017 by Wolfram Research.
 WXF supports serialization of several datatypes important for scientific computing including tensors, binary strings, and associative arrays.
 
-The goal is to put this format on all of our microcontrollers and sensor drivers so we can automatically discover and interface with any robotics and compute hardware and software in our system.
-
-## Rationale
+## Rationale 🖌
 WXF, as a self-describing format, is a good fit for exchange of data in large distributed systems where schmeas might not be known ahead of time.
 This also makes the format suitable in robotics development where many programs in multiple programming languages might be running on a system and passing messages to each other.
 The flexible nature of WXF allows individual programs to be adjusted on-the-fly without needing to recompile all nodes or re-generate schemas in multiple programming languages.
 
-The goal of Mirage is to enable the use of WXF on all microcontrollers and sensor drivers so we can automatically discover and interface with any robotics devices in our system.
+The goal is to put this format in all of our firmware, sensor drivers, and other programs so we can automatically discover and interface with any hardware and software in our robotics systems.
 
 Additionally, we want to support easy visualization of data in this format.
 
-
-## Example (C):
+## Example (C) 🚀
 ```C
 #include "mirage.h"
 #include <stdio.h>
@@ -82,7 +79,7 @@ Output:
 Hello, 42.000000
 ```
 
-## Build and Install
+## Build and Install 📖
 
 ```
 make
@@ -94,3 +91,20 @@ Uninstall
 ```
 sudo make uninstall
 ```
+
+## License ⚖
+
+Copyright © 2025 Alec Graves
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
