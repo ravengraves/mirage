@@ -113,5 +113,6 @@ int main(void) {
 
 	// ------ 1. Test free -------------------------------------------------
 	mirage_destroy(&msg, free);
+	printf("Basic tests passed.\n");
 	return 0;
 }

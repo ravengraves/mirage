@@ -2,6 +2,10 @@
 #ifndef MIRAGE_H
 #define MIRAGE_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -107,9 +111,6 @@ i64 mirage_read_numericarray(mirage_msg *msg, mirage_array_type *array_type,
 i64 mirage_read_association(mirage_msg *msg, i64 *length);
 i64 mirage_read_assoc_rule(mirage_msg *msg);
 
-// --- Advance the cursor past the next object ---------------------------------
-i64 mirage_next(mirage_msg *msg);
-
 // ---- Peek utilities (do not advance cursor) ---------------------------------
 i64 mirage_peek_element_type(mirage_msg *msg, mirage_element_type *e);
 
@@ -117,5 +118,9 @@ i64 mirage_peek_element_type(mirage_msg *msg, mirage_element_type *e);
 extern const u8 mirage_element_type_encoding[16];
 extern const u8 mirage_array_type_encoding[12];
 extern const u8 mirage_array_type_size[12];
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // MIRAGE_H

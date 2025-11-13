@@ -40,6 +40,9 @@ build/mirage.o: $(SOURCE)
 build/test: test.c build/libmirage.a
 	$(CC) $(CFLAGS) $(CEXE) -o build/test test.c build/libmirage.a # -fsanitize=address,undefined
 
+build/test_all: test_all.c build/libmirage.a
+	$(CC) $(CFLAGS) $(CEXE) -o build/test_all test_all.c build/libmirage.a # -fsanitize=address,undefined
+
 compile_commands.json: Makefile
 	@echo '[\n' \
 	'{"directory":"$(PWD)","command":"$(CC) -c $(CFLAGS) $(SOURCE) -o build/mirage.o","file":"$(SOURCE)"},\n' \
@@ -68,8 +71,9 @@ format:
 clean:
 	rm -rf build
 
-check: build/test
+check: build/test build/test_all
 	./build/test
+	./build/test_all
 
 .PHONY: format clean all check install uninstall
 
