@@ -8,7 +8,7 @@ CFLAGS := -Wall -Wextra -Wpedantic -Werror -std=c11 -fPIC -flto \
 	-fno-stack-protector -D_FORTIFY_SOURCE=0 \
 	-I . -O3 -mtune=native
 CEXE := -fuse-ld=lld -Wl,-gc-sections,-icf=safe,-s
-LDFLAGS := -flto -fuse-ld=lld
+LDFLAGS := -fuse-ld=lld
 
 # arduino version: TARGET=embedded
 ifeq ($(TARGET),embedded)

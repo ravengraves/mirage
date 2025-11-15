@@ -1,11 +1,11 @@
-// mirage+embedded.c — Portable embedded/big-endian safe implementation.
+// mirage+embedded.c - Portable embedded/big-endian safe implementation.
 // Always encodes/decodes little-endian on the wire via explicit byte shifts.
 // This implementation also limits message sizes to 32,767 bytes  and uses
 //  16-bit integer math for reduced footprint on microcontrollers.
 
 #include "mirage.h"
+#include "mirage_style.h"
 #include <stdlib.h>
-
 
 // ---- Encoding tables --------------------------------------------------------
 const u8 mirage_element_type_encoding[16] = {'f', 'C', 'j', 'i', 'L', 'r',
@@ -183,7 +183,7 @@ mirage_msg *mirage_create(i64 buffer_size, void *(*alloc)(size_t)) {
 	}
 	m->length = buffer_size;
 	m->cursor = 0;
-	m->data = (i8 *) m + sizeof(mirage_msg);
+	m->data = (u8 *) m + sizeof(mirage_msg);
 	mirage_write_start(m);
 	return m;
 }
@@ -297,8 +297,8 @@ i64 mirage_write_string(mirage_msg *m, char *v, i64 l) {
 	return _write_buf_(m, (i8 *) v, l, 'S');
 }
 
-i64 mirage_write_bin(mirage_msg *m, i8 *d, i64 l) {
-	return _write_buf_(m, d, l, 'B');
+i64 mirage_write_bin(mirage_msg *m, u8 *d, i64 l) {
+	return _write_buf_(m, (i8 *) d, l, 'B');
 }
 
 i64 mirage_write_sym(mirage_msg *m, char *n, i64 l) {
@@ -565,8 +565,8 @@ i64 mirage_read_string(mirage_msg *m, char *dst, i64 *l, i64 max) {
 	return _read_buf_(m, (i8 *) dst, l, max, 'S');
 }
 
-i64 mirage_read_bin(mirage_msg *m, i8 *dst, i64 *l, i64 max) {
-	return _read_buf_(m, dst, l, max, 'B');
+i64 mirage_read_bin(mirage_msg *m, u8 *dst, i64 *l, i64 max) {
+	return _read_buf_(m, (i8 *) dst, l, max, 'B');
 }
 
 i64 mirage_read_sym(mirage_msg *m, char *dst, i64 *l, i64 max) {

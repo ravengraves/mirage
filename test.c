@@ -1,5 +1,6 @@
-//  test.c – small demo that writes/reads a WXF function.
+//  test.c - small demo that writes/reads a WXF function.
 #include "mirage.h"
+#include "mirage_style.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,26 +22,26 @@ int main(void) {
 	// 4. f32 array 72.0 (scalar)
 	// 5. f64 42.0
 	i64 err = mirage_write_start(msg); // Write message start
-        err |= mirage_write_fn(msg, "List", sizeof("List") - 1,
-                               5);                     // function header
-        err |= mirage_write_i8(msg, 7);		       // First argument
+	err |= mirage_write_fn(msg, "List", sizeof("List") - 1,
+			       5);	// function header
+	err |= mirage_write_i8(msg, 7); // First argument
 	err |= mirage_write_string(msg, "Hello World!",
 				   sizeof("Hello World!") - 1); // Second argument
 
-	// Third argument – numeric array (3 i32 values)
+	// Third argument - numeric array (3 i32 values)
 	i32 arr[3] = {1, 2, 3};
 	i64 dim[1] = {3};
 	err |= mirage_write_numericarray(msg,
 					 MIRAGE_ARRAY_I32, // array type
-					 1,		   // rank (1‑D)
+					 1,		   // rank (1-D)
 					 dim,		   // dimensions
 					 arr);		   // data pointer
 
-	// Fourth argument – scalar (rank 0 array) with single float
+	// Fourth argument - scalar (rank 0 array) with single float
 	f32 scalar = 72.0f;
 	err |= mirage_write_numericarray(msg,
 					 MIRAGE_ARRAY_F32, // array type
-					 0,		   // rank (1‑D), 0 is scalar
+					 0,		   // rank (1-D), 0 is scalar
 					 0,		   // dimensions, none
 					 &scalar);	   // data pointer
 
