@@ -172,6 +172,7 @@ mirage_msg *mirage_create(i64 buffer_size, void *(*alloc)(size_t)) {
 	if(!m) {
 		return 0;
 	}
+	m->max_length = buffer_size;
 	m->length = buffer_size;
 	m->cursor = 0;
 	m->data = (u8 *) m + sizeof(mirage_msg);
@@ -372,7 +373,9 @@ i64 mirage_read_fn(mirage_msg *m, char *name, i64 *nlen, i64 nmax, i64 *argc) {
 		m->cursor = s;
 		return -2;
 	}
-	*argc = (i64) a;
+	if (argc != NULL) {
+		*argc = (i64) a;
+	}
 	// read symbol name
 	if(m->cursor >= m->length) {
 		m->cursor = s;
@@ -388,7 +391,7 @@ i64 mirage_read_fn(mirage_msg *m, char *name, i64 *nlen, i64 nmax, i64 *argc) {
 		m->cursor = s;
 		return -2;
 	}
-	if((i64) L > nmax || (i64) L > m->length - m->cursor) {
+	if((nmax && (i64) L > nmax) || (i64) L > m->length - m->cursor) {
 		m->cursor = s;
 		return -4;
 	}
@@ -473,7 +476,7 @@ static inline i64 _read_buf_(mirage_msg *m, i8 *dst, i64 *len, i64 max, i8 tag) 
 		m->cursor = s;
 		return -2;
 	}
-	if((i64) L > max || (i64) L > m->length - m->cursor) {
+	if((max && (i64) L > max) || (i64) L > m->length - m->cursor) {
 		m->cursor = s;
 		return -1;
 	}
@@ -557,7 +560,7 @@ i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 		m->cursor = s;
 		return -2;
 	}
-	if((i64) r > max_rank) {
+	if(!skip && (i64) r > max_rank) {
 		m->cursor = s;
 		return -1;
 	}
@@ -591,7 +594,7 @@ i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 		m->cursor = s;
 		return -1;
 	}
-	if(bytes > max_bytes || bytes > m->length - m->cursor) {
+	if((!skip && bytes > max_bytes) || bytes > m->length - m->cursor) {
 		m->cursor = s;
 		return -2;
 	}

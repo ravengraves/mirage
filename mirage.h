@@ -40,10 +40,12 @@ extern "C" {
  *  points to the underlying byte array.
  */
 typedef struct {
+	int64_t max_length; /**< Total bytes allocated. */
 	int64_t length; /**< Total valid bytes currently in buffer. */
 	int64_t cursor; /**< Read/write head. */
 	uint8_t *data;	/**< Byte buffer. */
 } mirage_msg;
+
 
 /* -------------------------------------------------------------------------- */
 /** @enum mirage_element_type
