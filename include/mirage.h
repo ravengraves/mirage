@@ -12,10 +12,63 @@
  * success, or a negative value on error.  The error codes are defined
  * in the @ref mirage_error enum.
  *
- * @note For string-related functions, passing `length == -1` will cause
- * the function to use `strlen(value)` (for writes) or to skip copying
- * the data (for reads).  This is a convenience for C callers that
- * prefer to supply null-terminated strings.
+ * @note For string-related functions, use MIRAGE_STRLEN (-1) to automatically
+ * determine string length with strlen(), or MIRAGE_SKIP_COPY (-1) to skip
+ * copying data during reads.
+ *
+ * @section example_basic Basic Encoding/Decoding Example
+ *
+ * @code
+ * // Create buffer
+ * mirage_msg *msg = mirage_create(1024, NULL);
+ *
+ * // Write data
+ * mirage_write_start(msg);
+ * mirage_write_fn(msg, "Plus", MIRAGE_STRLEN, 2);
+ * mirage_write_i64(msg, 1);
+ * mirage_write_i64(msg, 2);
+ *
+ * // Get encoded data for transmission
+ * int64_t length = msg->cursor;
+ * uint8_t *data = msg->data;
+ * // ... send data over network ...
+ *
+ * // Read back (e.g., on receiving end)
+ * mirage_msg *recv = mirage_create(1024, NULL);
+ * memcpy(recv->data, data, length);
+ *
+ * mirage_read_start(recv);
+ * char name[256];
+ * int64_t name_len, argc;
+ * mirage_read_fn(recv, name, &name_len, 256, &argc);
+ *
+ * int64_t arg1, arg2;
+ * mirage_read_i64(recv, &arg1);
+ * mirage_read_i64(recv, &arg2);
+ *
+ * // Cleanup
+ * mirage_destroy(&msg, NULL);
+ * mirage_destroy(&recv, NULL);
+ * @endcode
+ *
+ * @section example_error Error Handling Example
+ *
+ * @code
+ * int64_t rc = mirage_write_i64(msg, 42);
+ * if (rc == MIRAGE_ERR_BUFFERSIZE) {
+ *     // Buffer too small
+ *     fprintf(stderr, "Buffer too small\n");
+ * } else if (rc == MIRAGE_ERR_BADINPUT) {
+ *     // Invalid input (msg was NULL?)
+ *     fprintf(stderr, "Invalid input\n");
+ * } else if (rc < 0) {
+ *     // Other error
+ *     fprintf(stderr, "Error: %lld\n", (long long)rc);
+ * } else {
+ *     // Success: rc contains bytes written
+ *     printf("Wrote %lld bytes\n", (long long)rc);
+ * }
+ * @endcode
  */
 
 #ifndef MIRAGE_H
@@ -41,9 +94,9 @@ extern "C" {
  */
 typedef struct {
 	int64_t max_length; /**< Total bytes allocated. */
-	int64_t length; /**< Total valid bytes currently in buffer. */
-	int64_t cursor; /**< Read/write head. */
-	uint8_t *data;	/**< Byte buffer. */
+	int64_t length;	    /**< Total valid bytes currently in buffer. */
+	int64_t cursor;	    /**< Read/write head. */
+	uint8_t *data;	    /**< Byte buffer. */
 } mirage_msg;
 
 
@@ -143,20 +196,83 @@ typedef enum {
 } mirage_error;
 
 /* -------------------------------------------------------------------------- */
+/** @name Special Length Constants
+ *  @{
+ */
+
+/** @brief Special length value: automatically determine string length using strlen().
+ *
+ *  Use this value for the length parameter in write functions to automatically
+ *  calculate string length. Only valid for null-terminated strings.
+ */
+#define MIRAGE_STRLEN -1
+
+/** @brief Special length value for read functions: skip copying data.
+ *
+ *  Use this value for max_length in read functions to advance the cursor
+ *  without copying data into the output buffer. Useful for inspecting
+ *  data structure or skipping unwanted elements.
+ */
+#define MIRAGE_SKIP_COPY -1
+
+/** @brief Special length value for array reads: skip copying array data.
+ *
+ *  Use this value for max_bytes in mirage_read_numericarray to read
+ *  only the array metadata (type, rank, dimensions) without copying
+ *  the element data.
+ */
+#define MIRAGE_SKIP_DATA -1
+
+/** @brief Recommended max numeric array payload size for untrusted inputs.
+ *
+ *  7680x4320 * 4 bytes per pixel * 2 frames.
+ */
+#define MIRAGE_MAX_TENSOR_BYTES (7680LL * 4320LL * 4LL * 2LL)
+
+/** @} */
+
+/* -------------------------------------------------------------------------- */
 /** @name Setup / Teardown
  *  @{
  */
 
+/** @brief Initialize a message buffer with caller-provided storage.
+ *
+ *  Does not allocate memory or write a message header; call
+ *  mirage_write_start() before encoding a new message.
+ *
+ *  @param msg         Pointer to the mirage_msg structure to initialize.
+ *  @param buffer      Pointer to the data buffer.
+ *  @param buffer_size Size of the buffer in bytes (must be > 0).
+ */
+void mirage_init(mirage_msg *msg, uint8_t *buffer, int64_t buffer_size);
+
 /** @brief Create a new message buffer.
  *
- *  Allocates a @c mirage_msg structure and a data buffer of the given
- *  size.  The @p alloc callback is used to allocate the buffer.  If
- *  allocation fails, @c NULL is returned.
+ *  Allocates a mirage_msg structure and a data buffer of the given
+ *  size using the provided allocation callback.
  *
- *  @param buffer_size Size of the data buffer in bytes.
- *  @param alloc      Allocation callback; should have the same
- *                    signature as @c malloc.
- *  @return Pointer to the new @c mirage_msg, or @c NULL on failure.
+ *  @param buffer_size Size of the data buffer in bytes (must be > 0).
+ *  @param alloc      Allocation callback with malloc-compatible signature:
+ *                    - Must return aligned memory suitable for any type
+ *                    - Must return NULL on failure
+ *                    - If NULL, uses system malloc
+ *                    - Need not be thread-safe
+ *
+ *  @return Pointer to new mirage_msg, or NULL on failure (invalid size or allocation failure).
+ *
+ *  @note The deallocator passed to mirage_destroy() must match this allocator
+ *        (e.g., custom free for custom malloc).
+ *
+ *  Example with custom allocator:
+ *  @code
+ *      void *my_alloc(size_t n) { return aligned_alloc(64, n); }
+ *      void my_free(void *p) { free(p); }
+ *
+ *      mirage_msg *m = mirage_create(4096, my_alloc);
+ *      // ... use message ...
+ *      mirage_destroy(&m, my_free);
+ *  @endcode
  */
 mirage_msg *mirage_create(int64_t buffer_size, void *(*alloc)(size_t));
 
@@ -189,17 +305,36 @@ void mirage_destroy(mirage_msg **msg, void (*dealloc)(void *));
  */
 int64_t mirage_write_start(mirage_msg *msg);
 
+/** @brief Reset cursor to beginning without writing header.
+ *
+ *  Useful for reusing a buffer for multiple messages without
+ *  calling mirage_write_start() which writes the "8:" header.
+ *
+ *  @param msg Pointer to the message buffer.
+ *  @return 0 on success, or negative error code.
+ */
+int64_t mirage_reset(mirage_msg *msg);
+
+/** @brief Get remaining buffer space in bytes.
+ *
+ *  Useful for checking if there's enough space before writing.
+ *
+ *  @param msg Pointer to the message buffer.
+ *  @return Number of bytes available for writing, or 0 if msg is NULL.
+ */
+int64_t mirage_remaining(const mirage_msg *msg);
+
 /** @brief Write a function element.
  *
  *  Writes a function head followed by its name and argument count.
  *
  *  @param msg        Pointer to the message buffer.
  *  @param name       Null-terminated function name.
- *  @param name_length Length of the name in bytes; if -1, `strlen(name)` is used.
+ *  @param name_length Length of the name in bytes, or MIRAGE_STRLEN (-1) to use strlen(name).
  *  @param argc       Number of arguments the function takes.
  *  @return Number of bytes written or negative error code.
  */
-int64_t mirage_write_fn(mirage_msg *msg, char *name, int64_t name_length, int64_t argc);
+int64_t mirage_write_fn(mirage_msg *msg, const char *name, int64_t name_length, int64_t argc);
 
 /** @brief Write a signed 8-bit integer. */
 int64_t mirage_write_i8(mirage_msg *msg, int8_t value);
@@ -219,23 +354,23 @@ int64_t mirage_write_f64(mirage_msg *msg, double value);
 /** @brief Write a UTF-8 string.
  *
  *  @param msg        Pointer to the message buffer.
- *  @param value      Null-terminated string.
- *  @param length     Length of the string in bytes; if -1, `strlen(value)` is used.
+ *  @param value      Null-terminated string (must be valid UTF-8).
+ *  @param length     Length in bytes, or MIRAGE_STRLEN (-1) to use strlen(value).
  *  @return Number of bytes written or negative error code.
  */
-int64_t mirage_write_string(mirage_msg *msg, char *value, int64_t length);
+int64_t mirage_write_string(mirage_msg *msg, const char *value, int64_t length);
 
 /** @brief Write arbitrary binary data. */
-int64_t mirage_write_bin(mirage_msg *msg, uint8_t *data, int64_t length);
+int64_t mirage_write_bin(mirage_msg *msg, const uint8_t *data, int64_t length);
 
 /** @brief Write a symbol. */
-int64_t mirage_write_sym(mirage_msg *msg, char *name, int64_t length);
+int64_t mirage_write_sym(mirage_msg *msg, const char *name, int64_t length);
 
 /** @brief Write a big integer (decimal string). */
-int64_t mirage_write_bigint(mirage_msg *msg, char *value, int64_t length);
+int64_t mirage_write_bigint(mirage_msg *msg, const char *value, int64_t length);
 
 /** @brief Write a big real (decimal string). */
-int64_t mirage_write_bigreal(mirage_msg *msg, char *value, int64_t length);
+int64_t mirage_write_bigreal(mirage_msg *msg, const char *value, int64_t length);
 
 /** @brief Write a numeric array.
  *
@@ -247,7 +382,7 @@ int64_t mirage_write_bigreal(mirage_msg *msg, char *value, int64_t length);
  *  @return Number of bytes written or negative error code.
  */
 int64_t mirage_write_numericarray(mirage_msg *msg, mirage_array_type array_type,
-				  int64_t rank, int64_t *dims, void *data);
+				  int64_t rank, const int64_t *dims, const void *data);
 
 /** @brief Write the start of an association (key-value map). */
 int64_t mirage_write_association(mirage_msg *msg, int64_t length);
@@ -296,14 +431,14 @@ int64_t mirage_read_f64(mirage_msg *msg, double *value);
 
 /** @brief Read a UTF-8 string.
  *
- *  If @p max_length is -1, the function does not copy the string data
- *  into @p value; it merely advances past the string message without copying.
- *
  *  @param msg        Pointer to the message buffer.
- *  @param value      Buffer to receive the string data.
- *  @param length     Pointer to receive the string length.
- *  @param max_length Maximum buffer size for @p value.
- *  @return Number of bytes read or negative error code.
+ *  @param value      Buffer to receive string (may be NULL if max_length is MIRAGE_SKIP_COPY).
+ *  @param length     Pointer to receive actual string length.
+ *  @param max_length Buffer size, or MIRAGE_SKIP_COPY (-1) to skip copying.
+ *  @return Number of bytes read from message buffer or negative error code.
+ *
+ *  @note When max_length is MIRAGE_SKIP_COPY, only the cursor advances and
+ *        length is populated; no data is copied to value.
  */
 int64_t mirage_read_string(mirage_msg *msg, char *value, int64_t *length, int64_t max_length);
 
@@ -321,17 +456,17 @@ int64_t mirage_read_bigreal(mirage_msg *msg, char *value, int64_t *length, int64
 
 /** @brief Read a numeric array.
  *
- *  If @p max_bytes is -1, the function does not copy the string data
- *  into @p data; it merely advances past the string message without copying.
- *
  *  @param msg         Pointer to the message buffer.
  *  @param array_type  Pointer to receive the element type.
  *  @param rank        Pointer to receive the number of dimensions.
  *  @param dims        Buffer to receive the dimension sizes.
  *  @param max_rank    Maximum number of dimensions the caller can accept.
- *  @param data        Buffer to receive the raw element data.
- *  @param max_bytes   Maximum number of bytes the caller can accept.
+ *  @param data        Buffer to receive raw element data (may be NULL if max_bytes is MIRAGE_SKIP_DATA).
+ *  @param max_bytes   Maximum buffer size, or MIRAGE_SKIP_DATA (-1) to skip copying array elements.
  *  @return Number of bytes read or negative error code.
+ *
+ *  @note When max_bytes is MIRAGE_SKIP_DATA, only metadata (type, rank, dims) is read;
+ *        array element data is skipped and not copied to data buffer.
  */
 int64_t mirage_read_numericarray(mirage_msg *msg, mirage_array_type *array_type,
 				 int64_t *rank, int64_t *dims, int64_t max_rank, void *data, int64_t max_bytes);
@@ -353,8 +488,7 @@ int64_t mirage_read_assoc_rule(mirage_msg *msg);
  *
  *  @param msg Pointer to the message buffer.
  *  @param e   Pointer to receive the element type.
- *  @return Number of bytes consumed (typically the size of the type byte)
- *          or negative error code.
+ *  @return 1 (bytes inspected) on success, or negative error code.
  */
 int64_t mirage_peek_element_type(mirage_msg *msg, mirage_element_type *e);
 

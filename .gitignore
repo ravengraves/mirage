@@ -1,3 +1,9 @@
 build/
 .cache/
 compile_commands.json
+
+# Python build artifacts
+*.egg-info/
+__pycache__/
+*.so
+*.pyc

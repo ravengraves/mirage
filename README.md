@@ -14,6 +14,14 @@ The goal is to put this format in all of our firmware, sensor drivers, and other
 
 Additionally, we want to support easy visualization of data in this format.
 
+## Safety Limits
+When decoding untrusted input, always cap payloads to the storage you have
+available. In C, pass `max_bytes` to `mirage_read_numericarray` based on your
+output buffer size (or `MIRAGE_SKIP_DATA` to read metadata only). On
+microcontrollers, keep these caps at `INT16_MAX` (32767) or smaller.
+`MIRAGE_MAX_TENSOR_BYTES` defines a desktop-scale reference limit (two 8k RGBA
+frames).
+
 ## Example (C) 🚀
 ```C
 #include "mirage.h"
@@ -78,6 +86,49 @@ Output:
 ```
 Hello, 42.000000
 ```
+
+## Python API 🐍
+The Python bindings live in `lang/python` and link against the same `libmirage` built by `make`.
+
+Install (after building the C library):
+```
+make
+pip install ./lang/python    # or pip install -e ./lang/python for local edits
+```
+
+Example (mirrors `test/test_write.py` + `test/test_read.py`):
+```python
+import mirage, numpy as np
+
+message = [
+    mirage.i8(42),                  # explicit 8-bit
+    mirage.i16(-1000),              # explicit 16-bit
+    9223372036854775807,            # plain ints auto-pick i64 / BigInt
+    3.141592653589793,
+    "Hello, Mirage!",
+    b"\x00\x01\x02\x03\xff\xfe\xfd",
+    [1, 2, 3],                      # List
+    mirage.expr("Plus", 10, 20),   # WXF function
+    {"x": 1.5, "y": 2.5},        # Association
+    mirage.sym("Global`mySymbol"), # Symbol
+    None, True, False,
+    np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64),
+]
+
+blob = mirage.encode(message)
+round_trip = mirage.decode(blob)
+
+assert isinstance(round_trip[7], mirage.Expr)
+assert round_trip[9] == mirage.sym("Global`mySymbol")
+```
+
+Quick mapping:
+- `list` and `tuple` → WXF List. Use `mirage.expr(name, *args)` for functions instead of tuples.
+- Plain `int` → i64 (or BigInt if outside 64‑bit). Use `mirage.i8/i16/i32` to force width.
+- `mirage.sym(name)` produces a Symbol. "Null"/"True"/"False" decode to `None`/`True`/`False`; other symbols decode to `mirage.Sym` (a `str` subclass).
+- `numpy.ndarray` round-trips as NumericArray with dtype and shape preserved.
+
+See the Python tests in `test/test_write.py` and `test/test_read.py` for fuller coverage.
 
 ## Build and Install 📖
 
