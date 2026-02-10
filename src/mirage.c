@@ -87,32 +87,46 @@ static inline int checked_mul_i64(i64 a, i64 b, i64 *out) {
 
 // memcpy(dest, src, bytes);
 static inline void fast_memcpy(u8 *RESTRICT dest, const u8 *RESTRICT src, size_t n) {
-	size_t i = 0;
-	for(; i + 64 <= n; i += 64) {
-		u64 *dstptr = (u64 *) (dest + i);
-		const u64 *srcptr = (const u64 *) (src + i);
-		dstptr[0] = srcptr[0];
-		dstptr[1] = srcptr[1];
-		dstptr[2] = srcptr[2];
-		dstptr[3] = srcptr[3];
-		dstptr[4] = srcptr[4];
-		dstptr[5] = srcptr[5];
-		dstptr[6] = srcptr[6];
-		dstptr[7] = srcptr[7];
+	// Advance byte-by-byte until dest is 8-byte aligned (or n exhausted)
+	while(n && ((uintptr_t) dest & 7)) {
+		*dest++ = *src++;
+		--n;
 	}
-	for(; i + 32 <= n; i += 32) {
-		u64 *dstptr = (u64 *) (dest + i);
-		const u64 *srcptr = (const u64 *) (src + i);
-		dstptr[0] = srcptr[0];
-		dstptr[1] = srcptr[1];
-		dstptr[2] = srcptr[2];
-		dstptr[3] = srcptr[3];
+	// Both pointers aligned: fast 64-byte unrolled copy
+	if(!((uintptr_t) src & 7)) {
+		u64 *dw = (u64 *) dest;
+		const u64 *sw = (const u64 *) src;
+		if(n >= 32768) {
+			// Large copy: prefetch to hide L2/L3/RAM latency
+			while(n >= 64) {
+				__builtin_prefetch(sw + 16, 0, 1);
+				__builtin_prefetch(dw + 16, 1, 1);
+				dw[0] = sw[0]; dw[1] = sw[1]; dw[2] = sw[2]; dw[3] = sw[3];
+				dw[4] = sw[4]; dw[5] = sw[5]; dw[6] = sw[6]; dw[7] = sw[7];
+				dw += 8; sw += 8; n -= 64;
+			}
+		} else {
+			// L1-resident: skip prefetch
+			while(n >= 64) {
+				dw[0] = sw[0]; dw[1] = sw[1]; dw[2] = sw[2]; dw[3] = sw[3];
+				dw[4] = sw[4]; dw[5] = sw[5]; dw[6] = sw[6]; dw[7] = sw[7];
+				dw += 8; sw += 8; n -= 64;
+			}
+		}
+		while(n >= 32) {
+			dw[0] = sw[0]; dw[1] = sw[1]; dw[2] = sw[2]; dw[3] = sw[3];
+			dw += 4; sw += 4; n -= 32;
+		}
+		while(n >= 8) {
+			*dw++ = *sw++;
+			n -= 8;
+		}
+		dest = (u8 *) dw;
+		src = (const u8 *) sw;
 	}
-	for(; i + 8 <= n; i += 8) {
-		*(u64 *) (dest + i) = *(const u64 *) (src + i);
-	}
-	for(; i < n; i += 1) {
-		dest[i] = src[i];
+	// Byte remainder (or entire copy if src was unaligned)
+	while(n--) {
+		*dest++ = *src++;
 	}
 }
 
