@@ -1,176 +1,105 @@
-CC := clang
-AR := llvm-ar
+CC ?= cc
+AR ?= ar
 PREFIX ?= /usr/local
+WASM_CC ?= clang
+NODE ?= node
 
-# Base flags without LTO
-CFLAGS_BASE := -Wall -Wextra -Wpedantic -Werror -std=c11 -fPIC \
-	-ffunction-sections -fdata-sections \
-	-fno-stack-protector -D_FORTIFY_SOURCE=0 \
-	-I include -O3 -mtune=native
+BUILD_DIR := build
 
-# LTO flags for static library only (executable linking)
-CFLAGS_LTO := $(CFLAGS_BASE) -flto
+CPPFLAGS ?= -Iinclude
+CFLAGS ?= -O2 -g -Wall -Wextra -std=c11 -fPIC
+LDFLAGS ?=
+LDLIBS ?=
 
-# Non-LTO for shared library (Python/dlopen compatibility)
-CFLAGS_SO := $(CFLAGS_BASE)
+LIB_SHARED := $(BUILD_DIR)/libmirage.so
+LIB_STATIC := $(BUILD_DIR)/libmirage.a
+EMBEDDED_SHARED := $(BUILD_DIR)/libmirage_embedded.so
+EMBEDDED_STATIC := $(BUILD_DIR)/libmirage_embedded.a
 
-# Legacy CFLAGS for tests (with LTO)
-CFLAGS := $(CFLAGS_LTO)
+TEST_STANDARD := $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz
+TEST_PY := $(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_read_py
 
-CEXE := -fuse-ld=lld -Wl,-gc-sections,-icf=safe,-s
-LDFLAGS := -fuse-ld=lld
+.PHONY: all embedded test check check-embedded check-python wasm check-js install install-embedded uninstall python clean
 
-ifeq ($(ARCH),x86_64)
-	CFLAGS_BASE += -march=native
-	CFLAGS_LTO += -march=native
-	CFLAGS_SO += -march=native
-	CFLAGS += -march=native
-endif
+all: $(LIB_SHARED) $(LIB_STATIC)
 
-ifeq ($(ARCH),aarch64)
-	CFLAGS_BASE += -march=armv8-a
-	CFLAGS_LTO += -march=armv8-a
-	CFLAGS_SO += -march=armv8-a
-	CFLAGS += -march=armv8-a
-endif
+embedded: $(EMBEDDED_SHARED) $(EMBEDDED_STATIC)
 
-# =============================================================================
-# Standard library (64-bit lengths)
-# =============================================================================
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
-all: build/libmirage.so build/libmirage.a
+$(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-# Shared library - no LTO for Python/dlopen compatibility
-build/libmirage.so: build/mirage_so.o
-	$(CC) -shared -o $@ $< $(LDFLAGS)
+$(LIB_SHARED): $(BUILD_DIR)/mirage.o
+	$(CC) -shared -o $@ $< $(LDFLAGS) $(LDLIBS)
 
-# Static library - with LTO for best performance in C programs
-build/libmirage.a: build/mirage_lto.o
+$(LIB_STATIC): $(BUILD_DIR)/mirage.o
 	$(AR) rcs $@ $<
 
-build/mirage_so.o: src/mirage.c include/mirage.h
-	mkdir -p build
-	$(CC) -c $(CFLAGS_SO) src/mirage.c -o $@
+$(EMBEDDED_SHARED): $(BUILD_DIR)/mirage_embedded.o
+	$(CC) -shared -o $@ $< $(LDFLAGS) $(LDLIBS)
 
-build/mirage_lto.o: src/mirage.c include/mirage.h
-	mkdir -p build
-	$(CC) -c $(CFLAGS_LTO) src/mirage.c -o $@
-
-# =============================================================================
-# Embedded library (16-bit lengths, no malloc)
-# =============================================================================
-
-embedded: build/libmirage_embedded.so build/libmirage_embedded.a
-
-# Shared library - no LTO for Python/dlopen compatibility
-build/libmirage_embedded.so: build/mirage_embedded_so.o
-	$(CC) -shared -o $@ $< $(LDFLAGS)
-
-# Static library - with LTO for best performance in C programs
-build/libmirage_embedded.a: build/mirage_embedded_lto.o
+$(EMBEDDED_STATIC): $(BUILD_DIR)/mirage_embedded.o
 	$(AR) rcs $@ $<
 
-build/mirage_embedded_so.o: src/mirage_embedded.c include/mirage_embedded.h
-	mkdir -p build
-	$(CC) -c $(CFLAGS_SO) src/mirage_embedded.c -o $@
+test: $(TEST_STANDARD) $(BUILD_DIR)/test_embedded $(TEST_PY)
 
-build/mirage_embedded_lto.o: src/mirage_embedded.c include/mirage_embedded.h
-	mkdir -p build
-	$(CC) -c $(CFLAGS_LTO) src/mirage_embedded.c -o $@
+$(BUILD_DIR)/test: test/test.c $(LIB_STATIC) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
 
-# =============================================================================
-# Tests - Standard
-# =============================================================================
+$(BUILD_DIR)/test_all: test/test_all.c $(LIB_STATIC) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
 
-build/test: test/test.c build/libmirage.a
-	$(CC) $(CFLAGS) $(CEXE) -o $@ test/test.c build/libmirage.a
+$(BUILD_DIR)/test_fuzz: test/test_fuzz.c $(LIB_STATIC) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
 
-build/test_all: test/test_all.c build/libmirage.a
-	$(CC) $(CFLAGS) $(CEXE) -o $@ test/test_all.c build/libmirage.a
+check: $(TEST_STANDARD)
+	./$(BUILD_DIR)/test
+	./$(BUILD_DIR)/test_all
+	./$(BUILD_DIR)/test_fuzz
 
-build/test_fuzz: test/test_fuzz.c build/libmirage.a
-	$(CC) $(CFLAGS) $(CEXE) -o $@ test/test_fuzz.c build/libmirage.a
+$(BUILD_DIR)/test_embedded: test/test_embedded.c $(EMBEDDED_STATIC) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(EMBEDDED_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
 
-check: build/test build/test_all build/test_fuzz
-	./build/test
-	./build/test_all
-	./build/test_fuzz
+check-embedded: $(BUILD_DIR)/test_embedded
+	./$(BUILD_DIR)/test_embedded
 
-# =============================================================================
-# Tests - Embedded
-# =============================================================================
+$(BUILD_DIR)/test_write_py: test/test_write_py.c $(LIB_STATIC) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
 
-build/test_embedded: test/test_embedded.c build/libmirage_embedded.a
-	$(CC) $(CFLAGS) $(CEXE) -o $@ test/test_embedded.c build/libmirage_embedded.a
+$(BUILD_DIR)/test_read_py: test/test_read_py.c $(LIB_STATIC) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
 
-check-embedded: build/test_embedded
-	./build/test_embedded
+check-python: $(TEST_PY)
+	python3 test/test_write.py $(BUILD_DIR)/test_py2c.wxf
+	./$(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_py2c.wxf
+	./$(BUILD_DIR)/test_read_py $(BUILD_DIR)/test_c2py.wxf
+	python3 test/test_read.py $(BUILD_DIR)/test_c2py.wxf
 
-# =============================================================================
-# Tests - Python cross-language
-# =============================================================================
-
-build/test_write_py: test/test_write_py.c build/libmirage.a
-	$(CC) $(CFLAGS) $(CEXE) -o $@ test/test_write_py.c build/libmirage.a
-
-build/test_read_py: test/test_read_py.c build/libmirage.a
-	$(CC) $(CFLAGS) $(CEXE) -o $@ test/test_read_py.c build/libmirage.a
-
-check-python: build/test_write_py build/test_read_py
-	@echo "=== Python writes, C reads ==="
-	python3 test/test_write.py build/test_py2c.wxf
-	./build/test_write_py build/test_py2c.wxf
-	@echo ""
-	@echo "=== C writes, Python reads ==="
-	./build/test_read_py build/test_c2py.wxf
-	python3 test/test_read.py build/test_c2py.wxf
-	@echo ""
-	@echo "All cross-language tests passed!"
-
-# =============================================================================
-# Tests - Julia
-# =============================================================================
-
-check-julia: build/libmirage.so
-	julia --project=lang/julia -e 'include("lang/julia/test/runtests.jl")'
-
-# =============================================================================
-# WebAssembly build
-# =============================================================================
-
-build/mirage.wasm: src/mirage_wasm.c src/mirage_embedded.c include/mirage_embedded.h
-	clang --target=wasm32 -O2 \
-		-nostdlib -Wl,--no-entry -Wl,--export-dynamic \
+$(BUILD_DIR)/mirage.wasm: src/mirage_wasm.c src/mirage_embedded.c include/mirage_embedded.h | $(BUILD_DIR)
+	$(WASM_CC) --target=wasm32 -O2 -nostdlib \
+		-Wl,--no-entry -Wl,--export-dynamic \
 		-Wl,--initial-memory=2097152 -Wl,--max-memory=16777216 \
-		-I include -o $@ src/mirage_wasm.c
+		-Iinclude -o $@ src/mirage_wasm.c
 
-wasm: build/mirage.wasm
+wasm: $(BUILD_DIR)/mirage.wasm
 
-NODE ?= $(shell which node 2>/dev/null || echo node)
-
-check-js: build/mirage.wasm
+check-js: $(BUILD_DIR)/mirage.wasm
 	$(NODE) lang/js/test.mjs
 
-# =============================================================================
-# Install / Uninstall
-# =============================================================================
-
-install: build/libmirage.so build/libmirage.a
-	mkdir -p $(PREFIX)/lib
-	mkdir -p $(PREFIX)/include
-	install -m 0644 build/libmirage.so $(PREFIX)/lib/
-	install -m 0644 build/libmirage.a $(PREFIX)/lib/
+install: all
+	install -d $(PREFIX)/lib $(PREFIX)/include
+	install -m 0644 $(LIB_SHARED) $(PREFIX)/lib/
+	install -m 0644 $(LIB_STATIC) $(PREFIX)/lib/
 	install -m 0644 include/mirage.h $(PREFIX)/include/
 	install -m 0644 include/mirage_style.h $(PREFIX)/include/
-	sudo ldconfig
 
-install-embedded: build/libmirage_embedded.so build/libmirage_embedded.a
-	mkdir -p $(PREFIX)/lib
-	mkdir -p $(PREFIX)/include
-	install -m 0644 build/libmirage_embedded.so $(PREFIX)/lib/
-	install -m 0644 build/libmirage_embedded.a $(PREFIX)/lib/
+install-embedded: embedded
+	install -d $(PREFIX)/lib $(PREFIX)/include
+	install -m 0644 $(EMBEDDED_SHARED) $(PREFIX)/lib/
+	install -m 0644 $(EMBEDDED_STATIC) $(PREFIX)/lib/
 	install -m 0644 include/mirage_embedded.h $(PREFIX)/include/
-	sudo ldconfig
 
 uninstall:
 	rm -f $(PREFIX)/lib/libmirage.so
@@ -180,28 +109,9 @@ uninstall:
 	rm -f $(PREFIX)/include/mirage.h
 	rm -f $(PREFIX)/include/mirage_style.h
 	rm -f $(PREFIX)/include/mirage_embedded.h
-	sudo ldconfig
 
-# =============================================================================
-# Utilities
-# =============================================================================
-
-compile_commands.json: Makefile
-	@echo '[\n' \
-	'{"directory":"$(PWD)","command":"$(CC) -c $(CFLAGS) src/mirage.c -o build/mirage.o","file":"src/mirage.c"},\n' \
-	'{"directory":"$(PWD)","command":"$(CC) -c $(CFLAGS) src/mirage_embedded.c -o build/mirage_embedded.o","file":"src/mirage_embedded.c"},\n' \
-	'{"directory":"$(PWD)","command":"$(CC) $(CFLAGS) $(CEXE) -o build/test test/test.c build/libmirage.a","file":"test/test.c"},\n' \
-	'{"directory":"$(PWD)","command":"$(CC) $(CFLAGS) $(CEXE) -o build/test_fuzz test/test_fuzz.c build/libmirage.a","file":"test/test_fuzz.c"},\n' \
-	'{"directory":"$(PWD)","command":"$(CC) $(CFLAGS) $(CEXE) -o build/test_embedded test/test_embedded.c build/libmirage_embedded.a","file":"test/test_embedded.c"}\n]' \
-	> $@
-
-format:
-	clang-format -style=file -i $$(find src include test -name '*.c' -o -name '*.h')
-
-clean:
-	rm -rf build
-
-python: build/libmirage.so
+python: $(LIB_SHARED)
 	cd lang/python && pip install .
 
-.PHONY: format clean all embedded wasm check check-embedded check-python check-julia check-js install install-embedded uninstall python
+clean:
+	rm -rf $(BUILD_DIR)

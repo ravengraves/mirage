@@ -1,0 +1,80 @@
+cc = cc
+ar = ar
+wasm_cc = clang
+node = node
+cflags = -O2 -g -Wall -Wextra -std=c11 -fPIC
+cppflags = -Iinclude
+ldflags =
+ldlibs =
+
+rule mkdir
+  command = mkdir -p $out
+
+rule cc
+  command = $cc $cppflags $cflags -MMD -MF $out.d -c $in -o $out
+  depfile = $out.d
+  deps = gcc
+
+rule link_shared
+  command = $cc -shared -o $out $in $ldflags $ldlibs
+
+rule archive
+  command = rm -f $out && $ar rcs $out $in
+
+rule link_exe
+  command = $cc $cppflags $cflags -o $out $in $ldflags $ldlibs
+
+rule wasm
+  command = $wasm_cc --target=wasm32 -O2 -nostdlib -Wl,--no-entry -Wl,--export-dynamic -Wl,--initial-memory=2097152 -Wl,--max-memory=16777216 -Iinclude -o $out src/mirage_wasm.c
+
+rule run_check
+  command = ./build/test && ./build/test_all && ./build/test_fuzz && touch $out
+
+rule run_check_embedded
+  command = ./build/test_embedded && touch $out
+
+rule run_check_python
+  command = python3 test/test_write.py build/test_py2c.wxf && ./build/test_write_py build/test_py2c.wxf && ./build/test_read_py build/test_c2py.wxf && python3 test/test_read.py build/test_c2py.wxf && touch $out
+
+rule run_check_js
+  command = $node lang/js/test.mjs && touch $out
+
+rule do_clean
+  command = rm -rf build && rm -f $out
+
+build build: mkdir
+
+build build/mirage.o: cc src/mirage.c | build
+build build/mirage_embedded.o: cc src/mirage_embedded.c | build
+
+build build/libmirage.so: link_shared build/mirage.o
+build build/libmirage.a: archive build/mirage.o
+build build/libmirage_embedded.so: link_shared build/mirage_embedded.o
+build build/libmirage_embedded.a: archive build/mirage_embedded.o
+
+build build/test: link_exe test/test.c build/libmirage.a | build
+build build/test_all: link_exe test/test_all.c build/libmirage.a | build
+build build/test_fuzz: link_exe test/test_fuzz.c build/libmirage.a | build
+build build/test_embedded: link_exe test/test_embedded.c build/libmirage_embedded.a | build
+build build/test_write_py: link_exe test/test_write_py.c build/libmirage.a | build
+build build/test_read_py: link_exe test/test_read_py.c build/libmirage.a | build
+
+build build/mirage.wasm: wasm src/mirage_wasm.c src/mirage_embedded.c include/mirage_embedded.h | build
+
+build build/.check.stamp: run_check | build/test build/test_all build/test_fuzz
+build build/.check_embedded.stamp: run_check_embedded | build/test_embedded
+build build/.check_python.stamp: run_check_python | build/test_write_py build/test_read_py
+build build/.check_js.stamp: run_check_js | build/mirage.wasm
+build .ninja-clean.stamp: do_clean
+
+build all: phony build/libmirage.so build/libmirage.a
+build embedded: phony build/libmirage_embedded.so build/libmirage_embedded.a
+build test: phony build/test build/test_all build/test_fuzz build/test_embedded build/test_write_py build/test_read_py
+build check: phony build/.check.stamp
+build check-embedded: phony build/.check_embedded.stamp
+build check-python: phony build/.check_python.stamp
+build wasm: phony build/mirage.wasm
+build check-js: phony build/.check_js.stamp
+build clean: phony .ninja-clean.stamp
+
+default all
