@@ -1,0 +1,9 @@
+prefix=@PREFIX@
+libdir=@LIBDIR@
+includedir=@INCLUDEDIR@
+
+Name: mirage-embedded
+Description: Embedded WXF serialization library
+Version: @VERSION@
+Libs: -L${libdir} -lmirage_embedded
+Cflags: -I${includedir}

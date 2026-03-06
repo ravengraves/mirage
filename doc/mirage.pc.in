@@ -1,0 +1,9 @@
+prefix=@PREFIX@
+libdir=@LIBDIR@
+includedir=@INCLUDEDIR@
+
+Name: mirage
+Description: WXF serialization library
+Version: @VERSION@
+Libs: -L${libdir} -lmirage
+Cflags: -I${includedir}

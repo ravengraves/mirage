@@ -6,6 +6,8 @@ cflags = -O2 -g -Wall -Wextra -std=c11 -fPIC
 cppflags = -Iinclude
 ldflags =
 ldlibs =
+package_version = 1.0.0
+scdoc = scdoc
 
 rule mkdir
   command = mkdir -p $out
@@ -28,16 +30,34 @@ rule wasm
   command = $wasm_cc --target=wasm32 -O2 -nostdlib -Wl,--no-entry -Wl,--export-dynamic -Wl,--initial-memory=2097152 -Wl,--max-memory=16777216 -Iinclude -o $out src/mirage_wasm.c
 
 rule run_check
-  command = ./build/test && ./build/test_all && ./build/test_fuzz && touch $out
-
-rule run_check_embedded
-  command = ./build/test_embedded && touch $out
+  command = ./build/test && ./build/test_all && ./build/test_fuzz && ./build/test_embedded && touch $out
 
 rule run_check_python
   command = python3 test/test_write.py build/test_py2c.wxf && ./build/test_write_py build/test_py2c.wxf && ./build/test_read_py build/test_c2py.wxf && python3 test/test_read.py build/test_c2py.wxf && touch $out
 
 rule run_check_js
   command = $node lang/js/test.mjs && touch $out
+
+rule copy_docs
+  command = mkdir -p build/doc && cp $in build/doc/ && touch $out
+
+rule scdoc
+  command = mkdir -p `dirname $out` && $scdoc < $in > $out
+
+rule gen_pc
+  command = sed -e 's|@PREFIX@|$${PREFIX:-/usr/local}|g' -e 's|@LIBDIR@|$${LIBDIR:-$${PREFIX:-/usr/local}/lib}|g' -e 's|@INCLUDEDIR@|$${INCLUDEDIR:-$${PREFIX:-/usr/local}/include}|g' -e 's|@VERSION@|$package_version|g' $in > $out
+
+rule install_lib
+  command = prefix=$${PREFIX:-/usr/local}; dest=$${DESTDIR:-}; install -d $$dest$$prefix/lib $$dest$$prefix/include $$dest$$prefix/lib/pkgconfig && install -m 0644 build/libmirage.so $$dest$$prefix/lib/ && install -m 0644 build/libmirage.a $$dest$$prefix/lib/ && install -m 0644 build/libmirage_embedded.so $$dest$$prefix/lib/ && install -m 0644 build/libmirage_embedded.a $$dest$$prefix/lib/ && install -m 0644 include/mirage.h $$dest$$prefix/include/ && install -m 0644 include/mirage_style.h $$dest$$prefix/include/ && install -m 0644 include/mirage_embedded.h $$dest$$prefix/include/ && install -m 0644 build/mirage.pc $$dest$$prefix/lib/pkgconfig/ && install -m 0644 build/mirage-embedded.pc $$dest$$prefix/lib/pkgconfig/ && touch $out
+
+rule install_docs
+  command = prefix=$${PREFIX:-/usr/local}; dest=$${DESTDIR:-}; install -d $$dest$$prefix/share/doc/mirage $$dest$$prefix/share/man/man3 && install -m 0644 doc/*.md $$dest$$prefix/share/doc/mirage/ && install -m 0644 build/doc/mirage.3 $$dest$$prefix/share/man/man3/ && touch $out
+
+rule uninstall_lib
+  command = prefix=$${PREFIX:-/usr/local}; dest=$${DESTDIR:-}; rm -f $$dest$$prefix/lib/libmirage.so $$dest$$prefix/lib/libmirage.a $$dest$$prefix/lib/libmirage_embedded.so $$dest$$prefix/lib/libmirage_embedded.a $$dest$$prefix/include/mirage.h $$dest$$prefix/include/mirage_style.h $$dest$$prefix/include/mirage_embedded.h $$dest$$prefix/lib/pkgconfig/mirage.pc $$dest$$prefix/lib/pkgconfig/mirage-embedded.pc && touch $out
+
+rule uninstall_docs
+  command = prefix=$${PREFIX:-/usr/local}; dest=$${DESTDIR:-}; rm -f $$dest$$prefix/share/doc/mirage/*.md $$dest$$prefix/share/man/man3/mirage.3; rmdir $$dest$$prefix/share/doc/mirage 2>/dev/null || true; touch $out
 
 rule do_clean
   command = rm -rf build && rm -f $out
@@ -61,20 +81,32 @@ build build/test_read_py: link_exe test/test_read_py.c build/libmirage.a | build
 
 build build/mirage.wasm: wasm src/mirage_wasm.c src/mirage_embedded.c include/mirage_embedded.h | build
 
-build build/.check.stamp: run_check | build/test build/test_all build/test_fuzz
-build build/.check_embedded.stamp: run_check_embedded | build/test_embedded
+build build/doc/.stamp: copy_docs doc/README.md doc/windows-mingw.md
+build build/doc/mirage.3: scdoc doc/mirage.3.scd
+build build/mirage.pc: gen_pc doc/mirage.pc.in
+build build/mirage-embedded.pc: gen_pc doc/mirage-embedded.pc.in
+
+build build/.check.stamp: run_check | build/test build/test_all build/test_fuzz build/test_embedded
 build build/.check_python.stamp: run_check_python | build/test_write_py build/test_read_py
 build build/.check_js.stamp: run_check_js | build/mirage.wasm
+build build/.install_lib.stamp: install_lib | build/libmirage.so build/libmirage.a build/libmirage_embedded.so build/libmirage_embedded.a build/mirage.pc build/mirage-embedded.pc
+build build/.install_docs.stamp: install_docs | build/doc/.stamp build/doc/mirage.3
+build build/.uninstall_lib.stamp: uninstall_lib
+build build/.uninstall_docs.stamp: uninstall_docs
 build .ninja-clean.stamp: do_clean
 
-build all: phony build/libmirage.so build/libmirage.a
-build embedded: phony build/libmirage_embedded.so build/libmirage_embedded.a
-build test: phony build/test build/test_all build/test_fuzz build/test_embedded build/test_write_py build/test_read_py
+build all: phony build/libmirage.so build/libmirage.a build/libmirage_embedded.so build/libmirage_embedded.a build/test build/test_all build/test_fuzz build/test_embedded build/test_write_py build/test_read_py
 build check: phony build/.check.stamp
-build check-embedded: phony build/.check_embedded.stamp
 build check-python: phony build/.check_python.stamp
 build wasm: phony build/mirage.wasm
 build check-js: phony build/.check_js.stamp
 build clean: phony .ninja-clean.stamp
+build docs: phony build/doc/.stamp build/doc/mirage.3
+build install-lib: phony build/.install_lib.stamp
+build install-docs: phony build/.install_docs.stamp
+build install: phony build/.install_lib.stamp build/.install_docs.stamp
+build uninstall-lib: phony build/.uninstall_lib.stamp
+build uninstall-docs: phony build/.uninstall_docs.stamp
+build uninstall: phony build/.uninstall_lib.stamp build/.uninstall_docs.stamp
 
 default all
