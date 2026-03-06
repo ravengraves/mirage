@@ -1,8 +1,8 @@
-/*  mirage/_mirage.c - thin C wrapper for libmirage.so
+/*  mirage/_mirage.c - thin C wrapper for mirage shared library
  *
  *  Purpose
  *  --------
- *  - Load the symbols from libmirage.so at import time
+ *  - Load mirage symbols from a platform-appropriate shared library at import time
  *  - Expose those functions to Python with proper argument/return conversion
  *  - Provide low-level primitives for the high-level Python API
  *
@@ -15,17 +15,80 @@
 #define PY_SSIZE_T_CLEAN
 
 #include <Python.h>
-#include <dlfcn.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+typedef HMODULE dynlib_handle;
+#define DYNLIB_FLAG_NOW 0
+#define DYNLIB_FLAG_LOCAL 0
+
+static const char *dynlib_error_string(void) {
+	static char buf[256];
+	DWORD err = GetLastError();
+	if(err == 0) {
+		return "unknown error";
+	}
+	DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM
+				 | FORMAT_MESSAGE_IGNORE_INSERTS,
+				 NULL,
+				 err,
+				 0,
+				 buf,
+				 (DWORD) sizeof(buf),
+				 NULL);
+	if(n == 0) {
+		snprintf(buf, sizeof(buf), "Windows error %lu",
+			 (unsigned long) err);
+	} else {
+		while(n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) {
+			buf[n - 1] = '\0';
+			n -= 1;
+		}
+	}
+	return buf;
+}
+
+static dynlib_handle dynlib_open(const char *name, int flags) {
+	(void) flags;
+	SetLastError(0);
+	return LoadLibraryA(name);
+}
+
+static void *dynlib_symbol(dynlib_handle handle, const char *sym) {
+	SetLastError(0);
+	return (void *) GetProcAddress(handle, sym);
+}
+#else
+#include <dlfcn.h>
+typedef void *dynlib_handle;
+#define DYNLIB_FLAG_NOW RTLD_NOW
+#define DYNLIB_FLAG_LOCAL RTLD_LOCAL
+
+static const char *dynlib_error_string(void) {
+	const char *err = dlerror();
+	return err ? err : "unknown error";
+}
+
+static dynlib_handle dynlib_open(const char *name, int flags) {
+	return dlopen(name, flags);
+}
+
+static void *dynlib_symbol(dynlib_handle handle, const char *sym) {
+	return dlsym(handle, sym);
+}
+#endif
+
 #include "mirage.h"
 
 /* ---------------- 1.  symbol pointers -------------------------------------- */
 
-static void *lib_handle = NULL;
+static dynlib_handle lib_handle = NULL;
+static const char *loaded_lib_name = "libmirage";
 
 static mirage_msg *(*p_mirage_create)(int64_t, void *(*)(size_t)) = NULL;
 static void (*p_mirage_destroy)(mirage_msg **, void (*)(void *)) = NULL;
@@ -68,13 +131,56 @@ static const uint8_t *p_mirage_array_type_size = NULL;
 
 /* ------------------------ 2.  load a single symbol ------------------------- */
 
+#if defined(_WIN32)
+static const char *const MIRAGE_LIBRARY_CANDIDATES[] = {
+	"mirage.dll",
+	"libmirage.dll",
+};
+#elif defined(__APPLE__)
+static const char *const MIRAGE_LIBRARY_CANDIDATES[] = {
+	"libmirage.dylib",
+	"libmirage.so",
+};
+#else
+static const char *const MIRAGE_LIBRARY_CANDIDATES[] = {
+	"libmirage.so",
+	"libmirage.dylib",
+};
+#endif
+
+static dynlib_handle
+load_library_candidates(const char *logical_name, const char *const *candidates,
+			size_t candidate_count, int flags) {
+	char attempts[1024] = {0};
+	for(size_t i = 0; i < candidate_count; ++i) {
+		dynlib_handle handle = dynlib_open(candidates[i], flags);
+		if(handle) {
+			loaded_lib_name = candidates[i];
+			return handle;
+		}
+
+		const char *err = dynlib_error_string();
+		size_t used = strlen(attempts);
+		if(used < sizeof(attempts) - 1) {
+			snprintf(attempts + used, sizeof(attempts) - used, "%s%s (%s)",
+				 used ? "; " : "", candidates[i], err);
+		}
+	}
+
+	PyErr_Format(PyExc_RuntimeError,
+		     "Failed to load shared library for %s. Tried: %s",
+		     logical_name,
+		     attempts[0] ? attempts : "(none)");
+	return NULL;
+}
+
 static int
 load_symbol(const char *sym, void **ptr) {
-	void *addr = dlsym(lib_handle, sym);
+	void *addr = dynlib_symbol(lib_handle, sym);
 	if (!addr) {
 		PyErr_Format(PyExc_RuntimeError,
-			     "Failed to load symbol %s from libmirage.so: %s",
-			     sym, dlerror());
+			     "Failed to load symbol %s from %s: %s",
+			     sym, loaded_lib_name, dynlib_error_string());
 		return -1;
 	}
 	*ptr = addr;
@@ -956,7 +1062,7 @@ static PyMethodDef MirageMethods[] = {
 static struct PyModuleDef miragemodule = {
     PyModuleDef_HEAD_INIT,
     "mirage._mirage",
-    "Thin C wrapper for libmirage.so",
+    "Thin C wrapper for mirage shared library",
     -1,
     MirageMethods,
     NULL,
@@ -974,11 +1080,11 @@ PyInit__mirage(void) {
 	}
 
 	/* Load the shared library */
-	lib_handle = dlopen("libmirage.so", RTLD_NOW | RTLD_LOCAL);
+	lib_handle = load_library_candidates("mirage",
+					     MIRAGE_LIBRARY_CANDIDATES,
+					     sizeof(MIRAGE_LIBRARY_CANDIDATES) / sizeof(MIRAGE_LIBRARY_CANDIDATES[0]),
+					     DYNLIB_FLAG_NOW | DYNLIB_FLAG_LOCAL);
 	if (!lib_handle) {
-		PyErr_Format(PyExc_RuntimeError,
-			     "Failed to load shared library libmirage.so: %s",
-			     dlerror());
 		return NULL;
 	}
 
