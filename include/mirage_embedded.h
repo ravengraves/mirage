@@ -96,13 +96,13 @@ typedef enum {
  */
 
 /** @brief Special length value: automatically determine string length using strlen(). */
-#define MIRAGE_STRLEN -1
+#define MIRAGE_STRLEN (-1)
 
 /** @brief Special length value for read functions: skip copying data. */
-#define MIRAGE_SKIP_COPY -1
+#define MIRAGE_SKIP_COPY (-1)
 
 /** @brief Special length value for array reads: skip copying array data. */
-#define MIRAGE_SKIP_DATA -1
+#define MIRAGE_SKIP_DATA (-1)
 
 /** @} */
 

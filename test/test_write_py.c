@@ -36,33 +36,44 @@
 	} while(0)
 
 int main(int argc, char *argv[]) {
+	int rc = 1;
+	FILE *f = NULL;
+	unsigned char *data = NULL;
+	mirage_msg *msg = NULL;
+
 	if(argc != 2) {
 		fprintf(stderr, "Usage: %s <input_file>\n", argv[0]);
 		return 1;
 	}
 
 	// Read file
-	FILE *f = fopen(argv[1], "rb");
+	f = fopen(argv[1], "rb");
 	if(!f) {
 		perror("fopen");
-		return 1;
+		goto cleanup;
 	}
 	fseek(f, 0, SEEK_END);
 	long size = ftell(f);
 	fseek(f, 0, SEEK_SET);
 
-	unsigned char *data = malloc(size);
+	data = malloc(size);
 	if(fread(data, 1, size, f) != (size_t) size) {
 		fprintf(stderr, "Failed to read file\n");
-		return 1;
+		goto cleanup;
 	}
-	fclose(f);
+	if(fclose(f) != 0) {
+		perror("fclose");
+		f = NULL;
+		goto cleanup;
+	}
+	f = NULL;
 
 	// Create mirage message from data
-	mirage_msg *msg = mirage_create(size, malloc);
+	msg = mirage_create(size, malloc);
 	memcpy(msg->data, data, size);
 	msg->length = size;
 	free(data);
+	data = NULL;
 
 	// Read the WXF data
 	CHECK(mirage_read_start(msg));
@@ -273,7 +284,17 @@ int main(int argc, char *argv[]) {
 	ASSERT_EQ(assoc_len, 0);
 	printf("  20. Empty dict: {} ✓\n");
 
-	mirage_destroy(&msg, free);
 	printf("\nAll Python->C tests passed!\n");
-	return 0;
+	rc = 0;
+
+cleanup:
+	if(f) {
+		int close_rc = fclose(f);
+		(void) close_rc;
+	}
+	free(data);
+	if(msg) {
+		mirage_destroy(&msg, free);
+	}
+	return rc;
 }

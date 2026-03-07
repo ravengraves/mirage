@@ -197,41 +197,42 @@ static inline i64 _read_varu_(mirage_msg *m, u64 *out) {
 	return -2;
 }
 
-// Little-endian host: memcpy for 16/32/64 is OK (ABI endianness == wire LE).
+// Little-endian host: memcpy preserves the wire layout without assuming
+// alignment for the backing byte buffer.
 static inline void _w8_(mirage_msg *m, u8 v) {
 	m->data[m->cursor++] = (i8) v;
 	m->length = m->cursor;
 }
 static inline void _w16_(mirage_msg *m, u16 v) {
-	*(u16 *) (m->data + m->cursor) = v;
+	memcpy(m->data + m->cursor, &v, sizeof(v));
 	m->cursor += 2;
 	m->length = m->cursor;
 }
 static inline void _w32_(mirage_msg *m, u32 v) {
-	*(u32 *) (m->data + m->cursor) = v;
+	memcpy(m->data + m->cursor, &v, sizeof(v));
 	m->cursor += 4;
 	m->length = m->cursor;
 }
 static inline void _w64_(mirage_msg *m, u64 v) {
-	*(u64 *) (m->data + m->cursor) = v;
+	memcpy(m->data + m->cursor, &v, sizeof(v));
 	m->cursor += 8;
 	m->length = m->cursor;
 }
 static inline void _r16_(mirage_msg *m, u16 *v) {
 	if(v) {
-		*v = *(u16 *) (m->data + m->cursor);
+		memcpy(v, m->data + m->cursor, sizeof(*v));
 	}
 	m->cursor += 2;
 }
 static inline void _r32_(mirage_msg *m, u32 *v) {
 	if(v) {
-		*v = *(u32 *) (m->data + m->cursor);
+		memcpy(v, m->data + m->cursor, sizeof(*v));
 	}
 	m->cursor += 4;
 }
 static inline void _r64_(mirage_msg *m, u64 *v) {
 	if(v) {
-		*v = *(u64 *) (m->data + m->cursor);
+		memcpy(v, m->data + m->cursor, sizeof(*v));
 	}
 	m->cursor += 8;
 }
@@ -404,12 +405,9 @@ i64 mirage_write_f64(mirage_msg *m, f64 v) {
 		return -2;
 	}
 	_w8_(m, 'r');
-	union {
-		f64 d;
-		u64 i;
-	} u;
-	u.d = v;
-	_w64_(m, u.i);
+	u64 bits = 0;
+	memcpy(&bits, &v, sizeof(bits));
+	_w64_(m, bits);
 	return 9;
 }
 i64 mirage_write_string(mirage_msg *m, const char *v, i64 l) {
@@ -662,12 +660,9 @@ i64 mirage_read_f64(mirage_msg *m, f64 *v) {
 		return -1;
 	}
 	m->cursor++;
-	union {
-		f64 d;
-		u64 i;
-	} u;
-	_r64_(m, &u.i);
-	*v = u.d;
+	u64 bits = 0;
+	_r64_(m, &bits);
+	memcpy(v, &bits, sizeof(*v));
 	return 9;
 }
 static inline i64 _read_buf_(mirage_msg *m, i8 *dst, i64 *len, i64 max, i8 tag) {

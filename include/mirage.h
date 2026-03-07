@@ -205,7 +205,7 @@ typedef enum {
  *  Use this value for the length parameter in write functions to automatically
  *  calculate string length. Only valid for null-terminated strings.
  */
-#define MIRAGE_STRLEN -1
+#define MIRAGE_STRLEN (-1)
 
 /** @brief Special length value for read functions: skip copying data.
  *
@@ -213,7 +213,7 @@ typedef enum {
  *  without copying data into the output buffer. Useful for inspecting
  *  data structure or skipping unwanted elements.
  */
-#define MIRAGE_SKIP_COPY -1
+#define MIRAGE_SKIP_COPY (-1)
 
 /** @brief Special length value for array reads: skip copying array data.
  *
@@ -221,7 +221,7 @@ typedef enum {
  *  only the array metadata (type, rank, dimensions) without copying
  *  the element data.
  */
-#define MIRAGE_SKIP_DATA -1
+#define MIRAGE_SKIP_DATA (-1)
 
 /** @brief Recommended max numeric array payload size for untrusted inputs.
  *

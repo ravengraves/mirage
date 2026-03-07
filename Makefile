@@ -1,11 +1,19 @@
 CC ?= cc
 AR ?= ar
+NINJA ?= ninja
+CLANG ?= clang
+CLANG_TIDY ?= clang-tidy
+GCC_ANALYZER ?= gcc
 PREFIX ?= /usr/local
 DESTDIR ?=
 PACKAGE_VERSION ?= 1.0.0
 WASM_CC ?= clang
 NODE ?= node
 SCDOC ?= scdoc
+SANITIZERS ?= address,undefined
+SANITIZER_CFLAGS ?= -fsanitize=$(SANITIZERS) -fno-omit-frame-pointer
+SANITIZER_LDFLAGS ?= -fsanitize=$(SANITIZERS)
+SANITIZE_BUILD_DIR ?= build-sanitize
 
 BUILD_DIR := build
 DOC_DIR := doc
@@ -30,8 +38,11 @@ PC_EMBEDDED_FILE := $(BUILD_DIR)/mirage-embedded.pc
 
 ALL_EXES := $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz \
 	$(BUILD_DIR)/test_embedded $(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_read_py
+TEST_SOURCES := test/test.c test/test_all.c test/test_fuzz.c test/test_embedded.c \
+	test/test_write_py.c test/test_read_py.c
+ANALYZE_SOURCES := src/mirage.c src/mirage_embedded.c $(TEST_SOURCES)
 
-.PHONY: all test check check-python check-js wasm clean docs install-lib install-docs install uninstall-lib uninstall-docs uninstall python
+.PHONY: all test check check-runtime check-analysis check-python check-js wasm clean docs install-lib install-docs install uninstall-lib uninstall-docs uninstall python tidy clang-analyze fanalyzer sanitize-check analysis
 
 all: $(LIB_SHARED) $(LIB_STATIC) $(EMBEDDED_SHARED) $(EMBEDDED_STATIC) $(ALL_EXES)
 
@@ -76,17 +87,58 @@ $(BUILD_DIR)/test_read_py: test/test_read_py.c $(LIB_STATIC) | $(BUILD_DIR)
 
 test: $(ALL_EXES)
 
-check: $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz $(BUILD_DIR)/test_embedded
+check-runtime: $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz $(BUILD_DIR)/test_embedded
 	./$(BUILD_DIR)/test
 	./$(BUILD_DIR)/test_all
 	./$(BUILD_DIR)/test_fuzz
 	./$(BUILD_DIR)/test_embedded
+
+check-analysis: compile_commands.json
+	@set +e; \
+	for target in tidy clang-analyze fanalyzer; do \
+		echo "== $$target (warnings only) =="; \
+		$(MAKE) --no-print-directory $$target || \
+			echo "$$target reported findings; continuing to sanitizer tests"; \
+	done
+
+check: check-analysis sanitize-check
 
 check-python: $(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_read_py
 	python3 test/test_write.py $(BUILD_DIR)/test_py2c.wxf
 	./$(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_py2c.wxf
 	./$(BUILD_DIR)/test_read_py $(BUILD_DIR)/test_c2py.wxf
 	python3 test/test_read.py $(BUILD_DIR)/test_c2py.wxf
+
+compile_commands.json: build.ninja
+	$(NINJA) -f $< -t compdb cc link_exe > $@
+
+tidy: compile_commands.json
+	$(CLANG_TIDY) -quiet --extra-arg=-Wno-unused-command-line-argument -p . $(ANALYZE_SOURCES)
+
+clang-analyze:
+	set -e; \
+	for src in $(ANALYZE_SOURCES); do \
+		echo "CLANG-ANALYZE $$src"; \
+		$(CLANG) $(CPPFLAGS) $(CFLAGS) --analyze -Xanalyzer -analyzer-output=text $$src; \
+	done
+
+fanalyzer:
+	set -e; \
+	for src in $(ANALYZE_SOURCES); do \
+		echo "FANALYZER $$src"; \
+		$(GCC_ANALYZER) $(CPPFLAGS) $(CFLAGS) -fanalyzer -c $$src -o /dev/null; \
+	done
+
+sanitize-check:
+	rm -rf $(SANITIZE_BUILD_DIR)
+	ASAN_OPTIONS=detect_leaks=1:strict_init_order=1:check_initialization_order=1 \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+	$(MAKE) BUILD_DIR=$(SANITIZE_BUILD_DIR) CC=$(CLANG) \
+		CFLAGS='$(CFLAGS) $(SANITIZER_CFLAGS)' \
+		LDFLAGS='$(LDFLAGS) $(SANITIZER_LDFLAGS)' \
+		check-runtime
+
+analysis: check-analysis
 
 $(BUILD_DIR)/mirage.wasm: src/mirage_wasm.c src/mirage_embedded.c include/mirage_embedded.h | $(BUILD_DIR)
 	$(WASM_CC) --target=wasm32 -O2 -nostdlib \
@@ -166,4 +218,5 @@ python: $(LIB_SHARED)
 	cd lang/python && pip install .
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) $(SANITIZE_BUILD_DIR)
+	rm -f compile_commands.json

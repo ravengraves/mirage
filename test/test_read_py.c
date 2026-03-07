@@ -16,16 +16,20 @@
 	} while(0)
 
 int main(int argc, char *argv[]) {
+	int rc = 1;
+	FILE *f = NULL;
+	mirage_msg *msg = NULL;
+
 	if(argc != 2) {
 		fprintf(stderr, "Usage: %s <output_file>\n", argv[0]);
 		return 1;
 	}
 
 	// Create message buffer
-	mirage_msg *msg = mirage_create(8192, malloc);
+	msg = mirage_create(8192, malloc);
 	if(!msg) {
 		perror("mirage_create");
-		return 1;
+		goto cleanup;
 	}
 
 	CHECK(mirage_write_start(msg));
@@ -125,18 +129,32 @@ int main(int argc, char *argv[]) {
 	i64 len = msg->length;
 	u8 *buf = msg->data;
 
-	FILE *f = fopen(argv[1], "wb");
+	f = fopen(argv[1], "wb");
 	if(!f) {
 		perror("fopen");
-		return 1;
+		goto cleanup;
 	}
 	if(fwrite(buf, 1, len, f) != (size_t) len) {
 		fprintf(stderr, "Failed to write file\n");
-		return 1;
+		goto cleanup;
 	}
-	fclose(f);
+	if(fclose(f) != 0) {
+		perror("fclose");
+		f = NULL;
+		goto cleanup;
+	}
+	f = NULL;
 
-	mirage_destroy(&msg, free);
 	printf("Wrote %lld bytes to %s\n", (long long) len, argv[1]);
-	return 0;
+	rc = 0;
+
+cleanup:
+	if(f) {
+		int close_rc = fclose(f);
+		(void) close_rc;
+	}
+	if(msg) {
+		mirage_destroy(&msg, free);
+	}
+	return rc;
 }

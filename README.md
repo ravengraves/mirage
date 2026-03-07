@@ -143,6 +143,20 @@ Uninstall
 sudo make uninstall
 ```
 
+## Analysis
+
+Static analysis and sanitizer targets are available from the repo root:
+```
+make compile_commands.json
+make tidy
+make clang-analyze
+make fanalyzer
+make sanitize-check
+make analysis
+```
+
+`make sanitize-check` rebuilds into `build-sanitize/` with Clang ASan+UBSan and reruns the core C test suite from `make check`, leaving the normal `build/` directory alone.
+
 ## License ⚖
 
 Copyright © 2025 Alec Graves

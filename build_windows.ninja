@@ -1,0 +1,90 @@
+# Mirage Windows build graph (MinGW + Ninja)
+# Primary entrypoint on Windows:
+#   ninja -f build_windows.ninja
+# Uses PREFIX as the install root (default /usr/local).
+
+default_cc = x86_64-w64-mingw32-gcc
+default_ar = x86_64-w64-mingw32-ar
+
+builddir = build/windows
+cflags = -Wall -Wextra -Wpedantic -std=c11 -O2 -Iinclude
+package_version = 1.0.0
+
+rule cc
+  command = cmd /c "if not exist $builddir mkdir $builddir && if \"%CC%\"==\"\" set \"CC=$default_cc\" && %CC% -c $cflags $in -o $out"
+  description = CC $out
+
+rule archive
+  command = cmd /c "if not exist $builddir mkdir $builddir && if \"%AR%\"==\"\" set \"AR=$default_ar\" && if exist $out del /Q $out && %AR% rcs $out $in"
+  description = AR $out
+
+rule link_dll
+  command = cmd /c "if not exist $builddir mkdir $builddir && if \"%CC%\"==\"\" set \"CC=$default_cc\" && %CC% -shared -o $out $in -Wl,--out-implib,$implib"
+  description = DLL $out
+
+rule link_exe
+  command = cmd /c "if not exist $builddir mkdir $builddir && if \"%CC%\"==\"\" set \"CC=$default_cc\" && %CC% $cflags -o $out $in $lib"
+  description = EXE $out
+
+rule gen_pc
+  command = cmd /c "if \"%PREFIX%\"==\"\" set \"PREFIX=/usr/local\" && sed -e \"s|@PREFIX@|%PREFIX%|g\" -e \"s|@LIBDIR@|%PREFIX%/lib|g\" -e \"s|@INCLUDEDIR@|%PREFIX%/include|g\" -e \"s|@VERSION@|$package_version|g\" $in > $out"
+  description = GEN $out
+
+rule copy_install
+  command = cmd /c "if \"%PREFIX%\"==\"\" set \"PREFIX=/usr/local\" && if not exist \"%PREFIX%/$destdir\" mkdir \"%PREFIX%/$destdir\" && copy /Y $in \"%PREFIX%/$out\" >NUL"
+  description = INSTALL $out
+
+build $builddir/mirage.o: cc src/mirage.c
+build $builddir/mirage_embedded.o: cc src/mirage_embedded.c
+
+build $builddir/libmirage.a: archive $builddir/mirage.o
+build $builddir/libmirage_embedded.a: archive $builddir/mirage_embedded.o
+build $builddir/libmirage.dll: link_dll $builddir/mirage.o
+  implib = $builddir/libmirage.dll.a
+build $builddir/libmirage_embedded.dll: link_dll $builddir/mirage_embedded.o
+  implib = $builddir/libmirage_embedded.dll.a
+
+build $builddir/test.exe: link_exe test/test.c
+  lib = $builddir/libmirage.a
+build $builddir/test_all.exe: link_exe test/test_all.c
+  lib = $builddir/libmirage.a
+build $builddir/test_fuzz.exe: link_exe test/test_fuzz.c
+  lib = $builddir/libmirage.a
+build $builddir/test_embedded.exe: link_exe test/test_embedded.c
+  lib = $builddir/libmirage_embedded.a
+build $builddir/test_write_py.exe: link_exe test/test_write_py.c
+  lib = $builddir/libmirage.a
+build $builddir/test_read_py.exe: link_exe test/test_read_py.c
+  lib = $builddir/libmirage.a
+
+build $builddir/mirage.pc: gen_pc doc/mirage.pc.in
+build $builddir/mirage-embedded.pc: gen_pc doc/mirage-embedded.pc.in
+
+build lib/libmirage.a: copy_install $builddir/libmirage.a
+  destdir = lib
+build lib/libmirage.dll: copy_install $builddir/libmirage.dll
+  destdir = lib
+build lib/libmirage.dll.a: copy_install $builddir/libmirage.dll.a
+  destdir = lib
+build lib/libmirage_embedded.a: copy_install $builddir/libmirage_embedded.a
+  destdir = lib
+build lib/libmirage_embedded.dll: copy_install $builddir/libmirage_embedded.dll
+  destdir = lib
+build lib/libmirage_embedded.dll.a: copy_install $builddir/libmirage_embedded.dll.a
+  destdir = lib
+build include/mirage.h: copy_install include/mirage.h
+  destdir = include
+build include/mirage_style.h: copy_install include/mirage_style.h
+  destdir = include
+build include/mirage_embedded.h: copy_install include/mirage_embedded.h
+  destdir = include
+build lib/pkgconfig/mirage.pc: copy_install $builddir/mirage.pc
+  destdir = lib/pkgconfig
+build lib/pkgconfig/mirage-embedded.pc: copy_install $builddir/mirage-embedded.pc
+  destdir = lib/pkgconfig
+
+build all: phony $builddir/libmirage.a $builddir/libmirage_embedded.a $builddir/libmirage.dll $builddir/libmirage_embedded.dll $builddir/test.exe $builddir/test_all.exe $builddir/test_fuzz.exe $builddir/test_embedded.exe $builddir/test_write_py.exe $builddir/test_read_py.exe
+build dll: phony $builddir/libmirage.dll $builddir/libmirage_embedded.dll
+build install: phony lib/libmirage.a lib/libmirage.dll lib/libmirage.dll.a lib/libmirage_embedded.a lib/libmirage_embedded.dll lib/libmirage_embedded.dll.a include/mirage.h include/mirage_style.h include/mirage_embedded.h lib/pkgconfig/mirage.pc lib/pkgconfig/mirage-embedded.pc
+
+default all
