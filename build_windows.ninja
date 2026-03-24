@@ -57,8 +57,8 @@ build $builddir/test_write_py.exe: link_exe test/test_write_py.c
 build $builddir/test_read_py.exe: link_exe test/test_read_py.c
   lib = $builddir/libmirage.a
 
-build $builddir/mirage.pc: gen_pc doc/mirage.pc.in
-build $builddir/mirage-embedded.pc: gen_pc doc/mirage-embedded.pc.in
+build $builddir/mirage.pc: gen_pc docs/mirage.pc.in
+build $builddir/mirage-embedded.pc: gen_pc docs/mirage-embedded.pc.in
 
 build lib/libmirage.a: copy_install $builddir/libmirage.a
   destdir = lib
