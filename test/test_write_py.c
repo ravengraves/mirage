@@ -55,8 +55,16 @@ int main(int argc, char *argv[]) {
 	fseek(f, 0, SEEK_END);
 	long size = ftell(f);
 	fseek(f, 0, SEEK_SET);
+	if(size <= 0) {
+		fprintf(stderr, "Invalid input size: %ld\n", size);
+		goto cleanup;
+	}
 
 	data = malloc(size);
+	if(!data) {
+		fprintf(stderr, "malloc failed for %ld bytes\n", size);
+		goto cleanup;
+	}
 	if(fread(data, 1, size, f) != (size_t) size) {
 		fprintf(stderr, "Failed to read file\n");
 		goto cleanup;
@@ -70,6 +78,10 @@ int main(int argc, char *argv[]) {
 
 	// Create mirage message from data
 	msg = mirage_create(size, malloc);
+	if(!msg) {
+		fprintf(stderr, "mirage_create failed for %ld bytes\n", size);
+		goto cleanup;
+	}
 	memcpy(msg->data, data, size);
 	msg->length = size;
 	free(data);
