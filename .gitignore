@@ -3,8 +3,9 @@ build*/
 .cache/
 compile_commands.json
 
-# Python build artifacts
+# Python
 *.egg-info/
 __pycache__/
 *.so
+*.whl
 *.pyc

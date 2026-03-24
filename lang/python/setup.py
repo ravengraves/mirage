@@ -33,7 +33,7 @@ _mirage_ext = Extension(
 # The package metadata
 # -----------------------------------------------------------------
 setup(
-    name="mirage",
+    name="mirage-format",
     version="1.0.0",
     description="Python bindings for the Mirage WXF serialization library",
     author="Alec Graves",
