@@ -24,9 +24,19 @@ MAN_SOURCE := $(DOC_DIR)/mirage.3.scd
 MAN_PAGE := $(DOC_BUILD_DIR)/mirage.3
 
 CPPFLAGS ?= -Iinclude
-CFLAGS ?= -O2 -g -Wall -Wextra -std=c11 -fPIC
+CFLAGS ?= -O3 -g -Wall -Wextra -std=c11 -fPIC
 LDFLAGS ?=
 LDLIBS ?=
+
+ARCH ?= $(shell uname -m)
+
+ifeq ($(ARCH),x86_64)
+	CFLAGS += -march=native -mtune=native
+endif
+
+ifeq ($(ARCH),aarch64)
+	CFLAGS += -mcpu=native
+endif
 
 LIB_SHARED := $(BUILD_DIR)/libmirage.so
 LIB_STATIC := $(BUILD_DIR)/libmirage.a

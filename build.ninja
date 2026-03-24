@@ -6,7 +6,7 @@ clang_tidy = clang-tidy
 gcc_analyzer = gcc
 wasm_cc = clang
 node = node
-cflags = -O2 -g -Wall -Wextra -std=c11 -fPIC
+cflags = -O3 -g -Wall -Wextra -std=c11 -fPIC
 cppflags = -Iinclude
 ldflags =
 ldlibs =
