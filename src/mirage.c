@@ -150,7 +150,7 @@ static inline int _need_(mirage_msg *m, i64 n) {
 	if(!_validate_msg_(m) || n < 0) {
 		return 0;
 	}
-	return (m->cursor + n <= m->max_length);
+	return (n <= m->max_length - m->cursor);
 }
 
 static inline i64 _varu_size_(u64 v) {
@@ -294,7 +294,7 @@ i64 mirage_write_start(mirage_msg *m) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(m->max_length < 2) {
-		return -1;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	m->data[0] = '8';
 	m->data[1] = ':';
@@ -318,39 +318,47 @@ i64 mirage_remaining(const mirage_msg *m) {
 	}
 	return m->max_length - m->cursor;
 }
-static inline i64 _write_buf_(mirage_msg *m, const i8 *buf, i64 len, i8 tag) {
-	if(!_validate_msg_(m) || len < 0) {
-		return MIRAGE_ERR_BADINPUT;
-	}
-	i64 need = 1 + _varu_size_((u64) len) + len;
-	if(need > m->max_length - m->cursor) {
-		return -2;
-	}
+// Call only after checking space for the complete element.
+static inline void _write_buf_unchecked_(mirage_msg *m, const i8 *buf, i64 len, i8 tag) {
 	_w8_(m, (u8) tag);
 	_write_varu_(m, (u64) len);
 	fast_memcpy((u8 *) m->data + m->cursor, (const u8 *) buf, (size_t) len);
 	m->cursor += len;
 	m->length = m->cursor;
-	return need;
+}
+
+static inline i64 _write_buf_(mirage_msg *m, const i8 *buf, i64 len, i8 tag) {
+	if(!_validate_msg_(m) || len < 0) {
+		return MIRAGE_ERR_BADINPUT;
+	}
+	i64 header = 1 + _varu_size_((u64) len);
+	i64 remaining = m->max_length - m->cursor;
+	// Subtract the small header before comparing the potentially large payload.
+	if(header > remaining || len > remaining - header) {
+		return MIRAGE_ERR_BUFFERSIZE;
+	}
+	_write_buf_unchecked_(m, buf, len, tag);
+	return header + len;
 }
 i64 mirage_write_fn(mirage_msg *m, const char *name, i64 nlen, i64 argc) {
 	if(!_validate_msg_(m) || !name) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(argc < 0 || nlen < -1) {
+	if(argc < 0 || nlen < MIRAGE_STRLEN) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(nlen == -1) {
+	if(nlen == MIRAGE_STRLEN) {
 		nlen = strlen(name);
 	}
 	i64 start = m->cursor;
-	i64 worst = 1 + _varu_size_((u64) argc) + 1 + _varu_size_((u64) nlen) + nlen;
-	if(worst > m->max_length - m->cursor) {
-		return -2;
+	i64 header = 1 + _varu_size_((u64) argc) + 1 + _varu_size_((u64) nlen);
+	i64 remaining = m->max_length - m->cursor;
+	if(header > remaining || nlen > remaining - header) {
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8_(m, 'f');
 	_write_varu_(m, (u64) argc);
-	_write_buf_(m, (const i8 *) name, nlen, 's');
+	_write_buf_unchecked_(m, (const i8 *) name, nlen, 's');
 	return m->cursor - start;
 }
 i64 mirage_write_i8(mirage_msg *m, i8 v) {
@@ -358,7 +366,7 @@ i64 mirage_write_i8(mirage_msg *m, i8 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need_(m, 2)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8_(m, 'C');
 	_w8_(m, (u8) v);
@@ -369,7 +377,7 @@ i64 mirage_write_i16(mirage_msg *m, i16 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need_(m, 3)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8_(m, 'j');
 	_w16_(m, (u16) v);
@@ -380,7 +388,7 @@ i64 mirage_write_i32(mirage_msg *m, i32 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need_(m, 5)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8_(m, 'i');
 	_w32_(m, (u32) v);
@@ -391,7 +399,7 @@ i64 mirage_write_i64(mirage_msg *m, i64 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need_(m, 9)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8_(m, 'L');
 	_w64_(m, (u64) v);
@@ -402,7 +410,7 @@ i64 mirage_write_f64(mirage_msg *m, f64 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need_(m, 9)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8_(m, 'r');
 	u64 bits = 0;
@@ -414,7 +422,7 @@ i64 mirage_write_string(mirage_msg *m, const char *v, i64 l) {
 	if(!m || !v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(l == -1) {
+	if(l == MIRAGE_STRLEN) {
 		l = strlen(v);
 	}
 	return _write_buf_(m, (const i8 *) v, l, 'S');
@@ -429,7 +437,7 @@ i64 mirage_write_sym(mirage_msg *m, const char *n, i64 l) {
 	if(!m || !n) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(l == -1) {
+	if(l == MIRAGE_STRLEN) {
 		l = strlen(n);
 	}
 	return _write_buf_(m, (const i8 *) n, l, 's');
@@ -438,7 +446,7 @@ i64 mirage_write_bigint(mirage_msg *m, const char *v, i64 l) {
 	if(!m || !v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(l == -1) {
+	if(l == MIRAGE_STRLEN) {
 		l = strlen(v);
 	}
 	return _write_buf_(m, (const i8 *) v, l, 'I');
@@ -447,7 +455,7 @@ i64 mirage_write_bigreal(mirage_msg *m, const char *v, i64 l) {
 	if(!m || !v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(l == -1) {
+	if(l == MIRAGE_STRLEN) {
 		l = strlen(v);
 	}
 	return _write_buf_(m, (const i8 *) v, l, 'R');
@@ -458,33 +466,43 @@ i64 mirage_write_numericarray(mirage_msg *m, mirage_array_type t, i64 rank,
 	if(!_validate_msg_(m) || !data) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if((int) t < 0 || (int) t >= 12) {
+	if((unsigned) t >= 12) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(rank < 0) {
-		return -4;
+		return MIRAGE_ERR_BADINPUT;
 	}
 	if(rank > 0 && !dims) {
 		return MIRAGE_ERR_BADINPUT; // dims required when rank > 0
 	}
+	i64 remaining = m->max_length - m->cursor;
+	i64 header = 2 + _varu_size_((u64) rank);
+	if(header > remaining) {
+		return MIRAGE_ERR_BUFFERSIZE;
+	}
+	remaining -= header;
 	i64 elems = 1;
-	i64 dv = 0;
 	for(i64 i = 0; i < rank; ++i) {
 		i64 new_elems;
 		if(dims[i] < 0 || checked_mul_i64(elems, dims[i], &new_elems)) {
-			return -4;
+			return MIRAGE_ERR_BADINPUT;
 		}
 		elems = new_elems;
-		dv += _varu_size_((u64) dims[i]);
+		// Debit each dimension so even a large rank cannot overflow the header.
+		i64 dim_bytes = _varu_size_((u64) dims[i]);
+		if(dim_bytes > remaining) {
+			return MIRAGE_ERR_BUFFERSIZE;
+		}
+		remaining -= dim_bytes;
 	}
 	i64 bytes;
 	if(checked_mul_i64(elems, mirage_array_type_size[t], &bytes)) {
-		return -4;
+		return MIRAGE_ERR_BADINPUT;
 	}
-	i64 need = 1 + 1 + _varu_size_((u64) rank) + dv + bytes;
-	if(need > m->max_length - m->cursor) {
-		return -2;
+	if(bytes > remaining) {
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
+	i64 start = m->cursor;
 	_w8_(m, 0xC2);
 	_w8_(m, mirage_array_type_encoding[t]);
 	_write_varu_(m, (u64) rank);
@@ -494,7 +512,7 @@ i64 mirage_write_numericarray(mirage_msg *m, mirage_array_type t, i64 rank,
 	fast_memcpy((u8 *) m->data + m->cursor, (u8 *) data, (size_t) bytes);
 	m->cursor += bytes;
 	m->length = m->cursor;
-	return need;
+	return m->cursor - start;
 }
 
 i64 mirage_write_association(mirage_msg *m, i64 len) {
@@ -503,7 +521,7 @@ i64 mirage_write_association(mirage_msg *m, i64 len) {
 	}
 	i64 need = 1 + _varu_size_(len);
 	if(!_need_(m, need)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8_(m, 'A');
 	_write_varu_(m, (u64) len);
@@ -515,7 +533,7 @@ i64 mirage_write_assoc_rule(mirage_msg *m) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need_(m, 1)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8_(m, '-');
 	return 1;

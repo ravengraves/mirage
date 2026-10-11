@@ -6,7 +6,92 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Failed writes must leave both the buffer and cursor untouched. */
+static void test_writer_bounds(void) {
+	uint8_t buffer[32], before[32];
+	const uint8_t data[] = {1, 2, 3, 4};
+	mirage_msg msg;
+	memset(buffer, 0xA5, sizeof(buffer));
+	mirage_init(&msg, buffer, sizeof(buffer));
+	assert(mirage_write_start(&msg) == 2);
+	memcpy(before, buffer, sizeof(buffer));
+
+#define REJECT_WRITE(call, error) do { \
+	assert((call) == (error)); \
+	assert(msg.cursor == 2 && msg.length == 2); \
+	assert(memcmp(buffer, before, sizeof(buffer)) == 0); \
+} while(0)
+
+	REJECT_WRITE(mirage_write_bin(&msg, data, INT64_MAX), MIRAGE_ERR_BUFFERSIZE);
+	REJECT_WRITE(mirage_write_string(&msg, "x", INT64_MAX), MIRAGE_ERR_BUFFERSIZE);
+	REJECT_WRITE(mirage_write_sym(&msg, "x", INT64_MAX), MIRAGE_ERR_BUFFERSIZE);
+	REJECT_WRITE(mirage_write_bigint(&msg, "1", INT64_MAX), MIRAGE_ERR_BUFFERSIZE);
+	REJECT_WRITE(mirage_write_bigreal(&msg, "1", INT64_MAX), MIRAGE_ERR_BUFFERSIZE);
+	REJECT_WRITE(mirage_write_fn(&msg, "f", INT64_MAX, 0), MIRAGE_ERR_BUFFERSIZE);
+
+	int64_t dims[40] = {INT64_MAX};
+	REJECT_WRITE(mirage_write_numericarray(&msg, MIRAGE_ARRAY_U8, 1, dims, data),
+		     MIRAGE_ERR_BUFFERSIZE);
+	REJECT_WRITE(mirage_write_numericarray(&msg, MIRAGE_ARRAY_U64, 1, dims, data),
+		     MIRAGE_ERR_BADINPUT);
+	REJECT_WRITE(mirage_write_numericarray(&msg, (mirage_array_type) 12, 0, NULL, data),
+		     MIRAGE_ERR_BADINPUT);
+	REJECT_WRITE(mirage_write_numericarray(&msg, (mirage_array_type) -1, 0, NULL, data),
+		     MIRAGE_ERR_BADINPUT);
+
+	/* A zero-sized array can still have an oversized dimension header. */
+	dims[0] = 0;
+	for(size_t i = 1; i < sizeof(dims) / sizeof(dims[0]); ++i) {
+		dims[i] = INT64_MAX;
+	}
+	REJECT_WRITE(mirage_write_numericarray(&msg, MIRAGE_ARRAY_U8, 40, dims, data),
+		     MIRAGE_ERR_BUFFERSIZE);
+
+	/* One byte short, then an exact fit at a nonzero cursor. */
+	msg.max_length = 7;
+	REJECT_WRITE(mirage_write_bin(&msg, data, 4), MIRAGE_ERR_BUFFERSIZE);
+	msg.max_length = 8;
+	assert(mirage_write_bin(&msg, data, 4) == 6);
+	assert(msg.cursor == 8 && msg.length == 8);
+	assert(memcmp(buffer + 4, data, 4) == 0 && buffer[8] == 0xA5);
+
+	assert(mirage_write_start(&msg) == 2);
+	memset(buffer + 2, 0xA5, sizeof(buffer) - 2);
+	memcpy(before, buffer, sizeof(buffer));
+	msg.max_length = 6;
+	REJECT_WRITE(mirage_write_fn(&msg, "f", 1, 0), MIRAGE_ERR_BUFFERSIZE);
+	msg.max_length = 7;
+	assert(mirage_write_fn(&msg, "f", 1, 0) == 5);
+	assert(msg.cursor == 7 && msg.length == 7);
+	assert(memcmp(buffer + 2, "f\0s\1f", 5) == 0 && buffer[7] == 0xA5);
+
+	assert(mirage_write_start(&msg) == 2);
+	memset(buffer + 2, 0xA5, sizeof(buffer) - 2);
+	memcpy(before, buffer, sizeof(buffer));
+	dims[0] = 4;
+	msg.max_length = 9;
+	REJECT_WRITE(mirage_write_numericarray(&msg, MIRAGE_ARRAY_U8, 1, dims, data),
+		     MIRAGE_ERR_BUFFERSIZE);
+	msg.max_length = 10;
+	assert(mirage_write_numericarray(&msg, MIRAGE_ARRAY_U8, 1, dims, data) == 8);
+	assert(msg.cursor == 10 && msg.length == 10);
+	assert(memcmp(buffer + 6, data, 4) == 0 && buffer[10] == 0xA5);
+
+	/* Reject a full logical buffer without overflowing cursor + write size. */
+	msg.max_length = msg.length = msg.cursor = INT64_MAX;
+	assert(mirage_write_i8(&msg, 1) == MIRAGE_ERR_BUFFERSIZE);
+	assert(mirage_write_i16(&msg, 1) == MIRAGE_ERR_BUFFERSIZE);
+	assert(mirage_write_i32(&msg, 1) == MIRAGE_ERR_BUFFERSIZE);
+	assert(mirage_write_i64(&msg, 1) == MIRAGE_ERR_BUFFERSIZE);
+	assert(mirage_write_f64(&msg, 1) == MIRAGE_ERR_BUFFERSIZE);
+	assert(mirage_write_assoc_rule(&msg) == MIRAGE_ERR_BUFFERSIZE);
+	assert(msg.cursor == INT64_MAX);
+
+#undef REJECT_WRITE
+}
+
 int main(void) {
+	test_writer_bounds();
 	/* ------------------------------------------------------------------ */
 	/* 1. Allocate a message buffer (4096 bytes)                           */
 	/* ------------------------------------------------------------------ */

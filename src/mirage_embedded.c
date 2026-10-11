@@ -62,11 +62,14 @@ static inline void _memcpy(u8 *dest, const u8 *src, u16 n) {
 }
 
 static inline i16 _strlen(const char *str) {
-	i16 i = 0;
-	while(str[i] != 0) {
-		i++;
+	u16 i = 0;
+	while(*str++ != 0) {
+		i = i + 1;
+		if(i > INT16_MAX) {
+			return -1; // Length exceeds 32768
+		}
 	}
-	return i;
+	return (i16) i;
 }
 
 static inline int _need(mirage_msg *m, i16 n) {
@@ -210,20 +213,27 @@ i16 mirage_remaining(const mirage_msg *msg) {
 
 // ---- Write ------------------------------------------------------------------
 
-static i16 _write_buf(mirage_msg *m, const i8 *buf, i16 len, i8 tag) {
-	if(len < 0) {
-		return -4;
-	}
-	i16 need = 1 + _varu_size((u16) len) + len;
-	if(need > m->max_length - m->cursor) {
-		return -2;
-	}
+// Call only after checking space for the complete element.
+static inline void _write_buf_unchecked(mirage_msg *m, const i8 *buf, i16 len, i8 tag) {
 	_w8(m, (u8) tag);
 	_write_varu(m, (u16) len);
 	_memcpy(m->data + m->cursor, (const u8 *) buf, (u16) len);
 	m->cursor += len;
 	m->length = m->cursor;
-	return need;
+}
+
+static i16 _write_buf(mirage_msg *m, const i8 *buf, i16 len, i8 tag) {
+	if(len < 0) {
+		return MIRAGE_ERR_BADINPUT;
+	}
+	i16 header = 1 + _varu_size((u16) len);
+	i16 remaining = m->max_length - m->cursor;
+	// Subtract the small header before comparing the potentially large payload.
+	if(header > remaining || len > remaining - header) {
+		return MIRAGE_ERR_BUFFERSIZE;
+	}
+	_write_buf_unchecked(m, buf, len, tag);
+	return header + len;
 }
 
 i16 mirage_write_start(mirage_msg *m) {
@@ -231,7 +241,7 @@ i16 mirage_write_start(mirage_msg *m) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(m->max_length < 2) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	m->data[0] = '8';
 	m->data[1] = ':';
@@ -244,20 +254,24 @@ i16 mirage_write_fn(mirage_msg *m, const char *name, i16 nlen, i16 argc) {
 	if(!m || !name) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(argc < 0 || nlen < -1) {
-		return -4;
+	if(argc < 0 || nlen < MIRAGE_STRLEN) {
+		return MIRAGE_ERR_BADINPUT;
 	}
-	if(nlen == -1) {
+	if(nlen == MIRAGE_STRLEN) {
 		nlen = _strlen(name);
+		if(nlen < 0) {
+			return MIRAGE_ERR_BADINPUT;
+		}
 	}
 	i16 s = m->cursor;
-	i16 need = 1 + _varu_size((u16) argc) + 1 + _varu_size((u16) nlen) + nlen;
-	if(need > m->max_length - m->cursor) {
-		return -2;
+	i16 header = 1 + _varu_size((u16) argc) + 1 + _varu_size((u16) nlen);
+	i16 remaining = m->max_length - m->cursor;
+	if(header > remaining || nlen > remaining - header) {
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8(m, 'f');
 	_write_varu(m, (u16) argc);
-	_write_buf(m, (const i8 *) name, nlen, 's');
+	_write_buf_unchecked(m, (const i8 *) name, nlen, 's');
 	m->length = m->cursor;
 	return m->cursor - s;
 }
@@ -267,7 +281,7 @@ i16 mirage_write_i8(mirage_msg *m, i8 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need(m, 2)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8(m, 'C');
 	_w8(m, (u8) v);
@@ -280,7 +294,7 @@ i16 mirage_write_i16(mirage_msg *m, i16 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need(m, 3)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8(m, 'j');
 	_w16le(m, (u16) v);
@@ -293,7 +307,7 @@ i16 mirage_write_i32(mirage_msg *m, i32 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need(m, 5)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8(m, 'i');
 	_w32le(m, (u32) v);
@@ -306,7 +320,7 @@ i16 mirage_write_i64(mirage_msg *m, i64 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need(m, 9)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8(m, 'L');
 	_w64le(m, (u64) v);
@@ -319,7 +333,7 @@ i16 mirage_write_f64(mirage_msg *m, f64 v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need(m, 9)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8(m, 'r');
 	union {
@@ -336,7 +350,7 @@ i16 mirage_write_string(mirage_msg *m, const char *v, i16 l) {
 	if(!m || !v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(l == -1) {
+	if(l == MIRAGE_STRLEN) {
 		l = _strlen(v);
 	}
 	return _write_buf(m, (const i8 *) v, l, 'S');
@@ -353,7 +367,7 @@ i16 mirage_write_sym(mirage_msg *m, const char *n, i16 l) {
 	if(!m || !n) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(l == -1) {
+	if(l == MIRAGE_STRLEN) {
 		l = _strlen(n);
 	}
 	return _write_buf(m, (const i8 *) n, l, 's');
@@ -363,7 +377,7 @@ i16 mirage_write_bigint(mirage_msg *m, const char *v, i16 l) {
 	if(!m || !v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(l == -1) {
+	if(l == MIRAGE_STRLEN) {
 		l = _strlen(v);
 	}
 	return _write_buf(m, (const i8 *) v, l, 'I');
@@ -373,7 +387,7 @@ i16 mirage_write_bigreal(mirage_msg *m, const char *v, i16 l) {
 	if(!m || !v) {
 		return MIRAGE_ERR_BADINPUT;
 	}
-	if(l == -1) {
+	if(l == MIRAGE_STRLEN) {
 		l = _strlen(v);
 	}
 	return _write_buf(m, (const i8 *) v, l, 'R');
@@ -384,37 +398,47 @@ i16 mirage_write_numericarray(mirage_msg *m, mirage_array_type t, i16 rank,
 	if(!m || !data) {
 		return MIRAGE_ERR_BADINPUT;
 	}
+	if((unsigned) t >= 12) {
+		return MIRAGE_ERR_BADINPUT;
+	}
 	if(rank < 0) {
-		return -4;
+		return MIRAGE_ERR_BADINPUT;
 	}
 	if(rank > 0 && !dims) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 
+	i16 remaining = m->max_length - m->cursor;
+	i16 header = 2 + _varu_size((u16) rank);
+	if(header > remaining) {
+		return MIRAGE_ERR_BUFFERSIZE;
+	}
+	remaining -= header;
 	i16 elems = 1;
-	i16 dv = 0;
 	for(i16 i = 0; i < rank; i++) {
-		if(dims[i] < 0) {
-			return -4;
-		}
 		i16 new_elems;
-		if(_checked_mul_i16(elems, dims[i], &new_elems)) {
-			return -4;
+		if(dims[i] < 0 || _checked_mul_i16(elems, dims[i], &new_elems)) {
+			return MIRAGE_ERR_BADINPUT;
 		}
 		elems = new_elems;
-		dv += _varu_size((u16) dims[i]);
+		// Debit each dimension so even a large rank cannot overflow the header.
+		i16 dim_bytes = _varu_size((u16) dims[i]);
+		if(dim_bytes > remaining) {
+			return MIRAGE_ERR_BUFFERSIZE;
+		}
+		remaining -= dim_bytes;
 	}
 
 	i16 bytes;
 	if(_checked_mul_i16(elems, (i16) mirage_array_type_size[t], &bytes)) {
-		return -4;
+		return MIRAGE_ERR_BADINPUT;
 	}
 
-	i16 need = 1 + 1 + _varu_size((u16) rank) + dv + bytes;
-	if(need > m->max_length - m->cursor) {
-		return -2;
+	if(bytes > remaining) {
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 
+	i16 start = m->cursor;
 	_w8(m, 0xC2);
 	_w8(m, mirage_array_type_encoding[t]);
 	_write_varu(m, (u16) rank);
@@ -462,11 +486,11 @@ i16 mirage_write_numericarray(mirage_msg *m, mirage_array_type t, i16 rank,
 		break;
 	}
 	default:
-		return -4;
+		return MIRAGE_ERR_BADINPUT;
 	}
 
 	m->length = m->cursor;
-	return need;
+	return m->cursor - start;
 }
 
 i16 mirage_write_association(mirage_msg *m, i16 len) {
@@ -475,7 +499,7 @@ i16 mirage_write_association(mirage_msg *m, i16 len) {
 	}
 	i16 need = 1 + _varu_size((u16) len);
 	if(!_need(m, need)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8(m, 'A');
 	_write_varu(m, (u16) len);
@@ -488,7 +512,7 @@ i16 mirage_write_assoc_rule(mirage_msg *m) {
 		return MIRAGE_ERR_BADINPUT;
 	}
 	if(!_need(m, 1)) {
-		return -2;
+		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	_w8(m, '-');
 	m->length = m->cursor;
