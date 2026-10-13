@@ -4,6 +4,10 @@ NINJA ?= ninja
 CLANG ?= clang
 CLANG_TIDY ?= clang-tidy
 GCC_ANALYZER ?= gcc
+CPPCHECK ?= cppcheck
+CPPCHECK_FLAGS ?= --enable=warning,performance,portability,missingInclude \
+	--inconclusive --check-level=exhaustive --force
+CPPCHECK_EXTRA_FLAGS ?=
 PREFIX ?= /usr/local
 DESTDIR ?=
 PACKAGE_VERSION ?= 1.0.0
@@ -57,7 +61,7 @@ TEST_SOURCES := test/test.c test/test_all.c test/test_fuzz.c test/test_embedded.
 	test/test_fuzz_embedded.c test/test_write_py.c test/test_read_py.c
 ANALYZE_SOURCES := src/mirage.c src/mirage_embedded.c $(TEST_SOURCES)
 
-.PHONY: all test check check-runtime check-analysis check-python check-js wasm clean docs install-lib install-docs install uninstall-lib uninstall-docs uninstall python tidy clang-analyze fanalyzer sanitize-check fuzz-check analysis
+.PHONY: all test check check-runtime check-analysis check-python check-js wasm clean docs install-lib install-docs install uninstall-lib uninstall-docs uninstall python tidy clang-analyze fanalyzer cppcheck sanitize-check fuzz-check analysis
 
 all: $(LIB_SHARED) $(LIB_STATIC) $(EMBEDDED_SHARED) $(EMBEDDED_STATIC) $(ALL_EXES)
 
@@ -114,7 +118,7 @@ check-runtime: $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz $(
 
 check-analysis: compile_commands.json
 	@set +e; \
-	for target in tidy clang-analyze fanalyzer; do \
+	for target in tidy clang-analyze fanalyzer cppcheck; do \
 		echo "== $$target (warnings only) =="; \
 		$(MAKE) --no-print-directory $$target || \
 			echo "$$target reported findings; continuing to sanitizer tests"; \
@@ -134,6 +138,12 @@ compile_commands.json: build.ninja
 
 tidy: compile_commands.json
 	$(CLANG_TIDY) -quiet --extra-arg=-Wno-unused-command-line-argument -p . $(ANALYZE_SOURCES)
+
+# Included project headers are checked with their C translation units.
+# System headers are modeled by cppcheck's standard library configuration.
+cppcheck: compile_commands.json
+	$(CPPCHECK) --project=$< $(CPPCHECK_FLAGS) \
+		--suppress=missingIncludeSystem --error-exitcode=1 $(CPPCHECK_EXTRA_FLAGS)
 
 clang-analyze:
 	set -e; \

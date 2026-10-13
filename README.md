@@ -28,7 +28,7 @@ String, binary, symbol, bigint, bigreal, and function-name readers use `-1`
 (`MIRAGE_SKIP_COPY`) to skip copying while validating and consuming the value.
 Zero is an actual capacity and accepts only an empty value. Positive
 capacities require a destination, and capacities below `-1` are invalid.
-Numeric array reads can independently skip reading dimensions 
+Numeric array reads can independently skip reading dimensions
 (with `max_rank == -1`) and payloads (with `max_bytes == MIRAGE_SKIP_COPY`).
 
 Failed reads preserve the entry cursor and all outputs. Invalid arguments return
@@ -40,7 +40,7 @@ Any zero array dimension makes the payload empty.
 `mirage_create` requires at least two bytes for the message header.
 
 Only `MIRAGE_NUMERICARRAY` and `MIRAGE_RULE` are written/decoded
-(`PACKEDARRAY` / `RULE_DELAYED` are transformed because this implementation 
+(`PACKEDARRAY` / `RULE_DELAYED` are transformed because this implementation
 focuses on simple data representation rather than full WXF compatibility).
 
 ## Example (C) 🚀
@@ -149,14 +149,13 @@ Quick mapping:
 - `mirage.sym(name)` produces a Symbol. "Null"/"True"/"False" decode to `None`/`True`/`False`; other symbols decode to `mirage.Sym` (a `str` subclass).
 - `numpy.ndarray` round-trips as NumericArray with dtype and shape preserved.
 
-`encode_to` and `decode_from` accept C-contiguous buffers, including typed
-memoryviews; capacities and explicit lengths are measured in bytes. Output
-buffers must be writable. Noncontiguous buffers are rejected.
-These APIs are not zero-copy: encoding uses temporary message storage and copies
-the result through Python bytes into the destination, keeping it unchanged on
-serialization failure. Decoding copies input into owned message storage and
-creates independently owned payloads. Contiguous NumPy inputs pass directly to
-the C writer without an intermediate `tobytes()` copy.
+`encode_to` and `decode_from` accept C-contiguous buffers, including typed memoryviews;
+capacities and explicit lengths are measured in bytes.
+Output buffers must be writable. Noncontiguous buffers are rejected.
+
+Encoding with the Python API uses temporary message storage and copies the result through Python bytes into the destination, keeping it unchanged on serialization failure.
+Decoding copies input into owned message storage and creates independently owned payloads.
+Contiguous NumPy inputs pass directly to the C writer without an intermediate copy.
 
 See the Python tests in `test/test_write.py` and `test/test_read.py` for fuller coverage.
 
@@ -181,9 +180,40 @@ make compile_commands.json
 make tidy
 make clang-analyze
 make fanalyzer
+make cppcheck
 make sanitize-check
 make analysis
 ```
+
+`make cppcheck` uses the Ninja-generated `compile_commands.json`, generating it
+when needed without compiling the project. It checks `src/mirage.c`,
+`src/mirage_embedded.c`, their included headers, and the seven C test programs in
+`build.ninja` (including `test/test_all.c`). The Python implementation is outside
+this database.
+Install [Cppcheck 2.11 or newer](https://sourceforge.net/p/cppcheck/news/2023/06/cppcheck-211/)
+and Ninja; on Debian/Ubuntu:
+
+```
+sudo apt-get install cppcheck ninja-build
+```
+
+The target enables error, warning, performance, portability, and missing project
+include checks, with exhaustive value-flow analysis, all preprocessor
+configurations, and inconclusive findings. Review inconclusive findings for
+false positives. System include diagnostics are suppressed because Cppcheck
+models the standard library. Style and unused-function checks are off by default;
+unused public library functions need not be defects. To include style checks:
+
+```
+make cppcheck CPPCHECK_EXTRA_FLAGS=--enable=style
+```
+
+Override `CPPCHECK`, `CPPCHECK_FLAGS`, or `CPPCHECK_EXTRA_FLAGS` as needed.
+`make cppcheck` exits nonzero on findings or tool failures, so use it directly
+as a CI gate. `make analysis` and `make check` also run it through the existing
+advisory analysis group, which reports findings and continues. The compilation
+database uses flags from `build.ninja`; Make-only `CFLAGS`/`CPPFLAGS` overrides
+are not reflected in it.
 
 `make sanitize-check` rebuilds into `build-sanitize/` with Clang ASan+UBSan and reruns the core C test suite from `make check`, leaving the normal `build/` directory alone.
 
