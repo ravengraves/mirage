@@ -531,7 +531,7 @@ def decode_from(buffer: bytes | bytearray | memoryview, length: int | None = Non
         Decoded Python object
     """
     buffer = _byte_view(buffer)
-    length = buffer.nbytes if length is None else int(length)
+    length = buffer.nbytes if length is None else length
     if not 0 <= length <= buffer.nbytes:
         raise ValueError("length must be between zero and buffer byte capacity")
     return decode(buffer[:length])
