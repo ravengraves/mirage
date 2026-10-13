@@ -60,8 +60,9 @@ ALL_EXES := $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz \
 TEST_SOURCES := test/test.c test/test_all.c test/test_fuzz.c test/test_embedded.c \
 	test/test_fuzz_embedded.c test/test_write_py.c test/test_read_py.c
 ANALYZE_SOURCES := src/mirage.c src/mirage_embedded.c $(TEST_SOURCES)
+RUNTIME_TESTS := test test_all test_embedded test_fuzz test_fuzz_embedded
 
-.PHONY: all test check check-runtime check-analysis check-python check-js wasm clean docs install-lib install-docs install uninstall-lib uninstall-docs uninstall python tidy clang-analyze fanalyzer cppcheck sanitize-check fuzz-check analysis
+.PHONY: all test check check-slow check-runtime check-analysis check-python check-js wasm clean docs install-lib install-docs install uninstall-lib uninstall-docs uninstall python tidy clang-analyze fanalyzer cppcheck sanitize-check fuzz-check analysis
 
 all: $(LIB_SHARED) $(LIB_STATIC) $(EMBEDDED_SHARED) $(EMBEDDED_STATIC) $(ALL_EXES)
 
@@ -109,12 +110,8 @@ $(BUILD_DIR)/test_read_py: test/test_read_py.c $(LIB_STATIC) | $(BUILD_DIR)
 
 test: $(ALL_EXES)
 
-check-runtime: $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz $(BUILD_DIR)/test_fuzz_embedded $(BUILD_DIR)/test_embedded
-	./$(BUILD_DIR)/test
-	./$(BUILD_DIR)/test_all
-	./$(BUILD_DIR)/test_fuzz
-	./$(BUILD_DIR)/test_fuzz_embedded
-	./$(BUILD_DIR)/test_embedded
+check-runtime: $(addprefix $(BUILD_DIR)/,$(RUNTIME_TESTS))
+	@set -e; for test in $(RUNTIME_TESTS); do ./$(BUILD_DIR)/$$test; done
 
 check-analysis: compile_commands.json
 	@set +e; \
@@ -124,7 +121,11 @@ check-analysis: compile_commands.json
 			echo "$$target reported findings; continuing to sanitizer tests"; \
 	done
 
-check: check-analysis sanitize-check
+# C runtime regressions, advisory static analysis, and ASan/UBSan.
+# Python bindings remain separate; timed libFuzzer runs are opt-in.
+check: check-runtime check-analysis sanitize-check
+
+check-slow: check fuzz-check
 
 check-python: $(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_read_py
 	python3 test/test_python_bounds.py

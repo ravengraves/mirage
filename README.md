@@ -172,6 +172,23 @@ Uninstall
 sudo make uninstall
 ```
 
+`make check` runs the C runtime regression tests (including `test_fuzz` and
+`test_fuzz_embedded`), static analysis, and ASan/UBSan. It does not run timed
+libFuzzer checks. `make check-slow` adds libFuzzer checks, with a default
+budget of 10 seconds per binary.
+
+These C checks need GCC, Clang with sanitizer support, clang-tidy, Cppcheck,
+and Ninja. The Ubuntu CI workflow installs them before running checks.
+
+Python checks are separate. After building and installing the bindings:
+
+```
+make check-python
+```
+
+GitHub Actions runs `make check` and `make check-python`; slow checks are local
+or explicitly invoked. Ninja also exposes `check` and `check-slow`.
+
 ## Analysis
 
 Static analysis and sanitizer targets are available from the repo root:
@@ -210,12 +227,12 @@ make cppcheck CPPCHECK_EXTRA_FLAGS=--enable=style
 
 Override `CPPCHECK`, `CPPCHECK_FLAGS`, or `CPPCHECK_EXTRA_FLAGS` as needed.
 `make cppcheck` exits nonzero on findings or tool failures, so use it directly
-as a CI gate. `make analysis` and `make check` also run it through the existing
+as a CI gate. `make analysis`, `make check`, and `make check-slow` also run it through the existing
 advisory analysis group, which reports findings and continues. The compilation
 database uses flags from `build.ninja`; Make-only `CFLAGS`/`CPPFLAGS` overrides
 are not reflected in it.
 
-`make sanitize-check` rebuilds into `build-sanitize/` with Clang ASan+UBSan and reruns the core C test suite from `make check`, leaving the normal `build/` directory alone.
+`make sanitize-check` rebuilds into `build-sanitize/` with Clang ASan+UBSan and runs the full C runtime suite, including the fuzz regression executables, leaving the normal `build/` directory alone.
 
 The fuzz-style tests include invalid message pointers/fields for both APIs and
 embedded array regressions for NULL destinations, negative capacities, skip

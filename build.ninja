@@ -99,8 +99,11 @@ build build/docs/mirage.3: scdoc docs/mirage.3.scd
 build build/mirage.pc: gen_pc docs/mirage.pc.in
 build build/mirage-embedded.pc: gen_pc docs/mirage-embedded.pc.in
 
-build build/.check.stamp: delegate_make | build
+build force_check: phony
+build build/.check.stamp: delegate_make | force_check build
   target = check
+build build/.check_slow.stamp: delegate_make | force_check build
+  target = check-slow
 build build/.check_python.stamp: run_check_python | build/test_write_py build/test_read_py test/test_python_bounds.py lang/python/mirage/_mirage.c
 build build/.check_js.stamp: run_check_js | build/mirage.wasm lang/js/test.mjs
 build build/.install_lib.stamp: install_lib | build/libmirage.so build/libmirage.a build/libmirage_embedded.so build/libmirage_embedded.a build/mirage.pc build/mirage-embedded.pc
@@ -125,6 +128,7 @@ build build/.analysis.stamp: delegate_make | build
 
 build all: phony build/libmirage.so build/libmirage.a build/libmirage_embedded.so build/libmirage_embedded.a build/test build/test_all build/test_fuzz build/test_fuzz_embedded build/test_embedded build/test_write_py build/test_read_py
 build check: phony build/.check.stamp
+build check-slow: phony build/.check_slow.stamp
 build check-python: phony build/.check_python.stamp
 build wasm: phony build/mirage.wasm
 build check-js: phony build/.check_js.stamp
