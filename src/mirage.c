@@ -85,51 +85,6 @@ static inline int checked_mul_i64(i64 a, i64 b, i64 *out) {
 #endif
 }
 
-// memcpy(dest, src, bytes);
-static inline void fast_memcpy(u8 *RESTRICT dest, const u8 *RESTRICT src, size_t n) {
-	// Advance byte-by-byte until dest is 8-byte aligned (or n exhausted)
-	while(n && ((uintptr_t) dest & 7)) {
-		*dest++ = *src++;
-		--n;
-	}
-	// Both pointers aligned: fast 64-byte unrolled copy
-	if(!((uintptr_t) src & 7)) {
-		u64 *dw = (u64 *) dest;
-		const u64 *sw = (const u64 *) src;
-		if(n >= 32768) {
-			// Large copy: prefetch to hide L2/L3/RAM latency
-			while(n >= 64) {
-				__builtin_prefetch(sw + 16, 0, 1);
-				__builtin_prefetch(dw + 16, 1, 1);
-				dw[0] = sw[0]; dw[1] = sw[1]; dw[2] = sw[2]; dw[3] = sw[3];
-				dw[4] = sw[4]; dw[5] = sw[5]; dw[6] = sw[6]; dw[7] = sw[7];
-				dw += 8; sw += 8; n -= 64;
-			}
-		} else {
-			// L1-resident: skip prefetch
-			while(n >= 64) {
-				dw[0] = sw[0]; dw[1] = sw[1]; dw[2] = sw[2]; dw[3] = sw[3];
-				dw[4] = sw[4]; dw[5] = sw[5]; dw[6] = sw[6]; dw[7] = sw[7];
-				dw += 8; sw += 8; n -= 64;
-			}
-		}
-		while(n >= 32) {
-			dw[0] = sw[0]; dw[1] = sw[1]; dw[2] = sw[2]; dw[3] = sw[3];
-			dw += 4; sw += 4; n -= 32;
-		}
-		while(n >= 8) {
-			*dw++ = *sw++;
-			n -= 8;
-		}
-		dest = (u8 *) dw;
-		src = (const u8 *) sw;
-	}
-	// Byte remainder (or entire copy if src was unaligned)
-	while(n--) {
-		*dest++ = *src++;
-	}
-}
-
 static inline int _validate_msg_(const mirage_msg *m) {
 	// This ordering also implies nonnegative length and max_length.
 	return m && m->data && m->cursor >= 0
@@ -315,7 +270,7 @@ i64 mirage_remaining(const mirage_msg *m) {
 static inline void _write_buf_unchecked_(mirage_msg *m, const i8 *buf, i64 len, i8 tag) {
 	_w8_(m, (u8) tag);
 	_write_varu_(m, (u64) len);
-	fast_memcpy((u8 *) m->data + m->cursor, (const u8 *) buf, (size_t) len);
+	memcpy((u8 *) m->data + m->cursor, (const u8 *) buf, (size_t) len);
 	m->cursor += len;
 	m->length = m->cursor;
 }
@@ -509,7 +464,7 @@ i64 mirage_write_numericarray(mirage_msg *m, mirage_array_type t, i64 rank,
 	for(i64 i = 0; i < rank; ++i) {
 		_write_varu_(m, (u64) dims[i]);
 	}
-	fast_memcpy((u8 *) m->data + m->cursor, (u8 *) data, (size_t) bytes);
+	memcpy((u8 *) m->data + m->cursor, (u8 *) data, (size_t) bytes);
 	m->cursor += bytes;
 	m->length = m->cursor;
 	return m->cursor - start;
@@ -597,7 +552,7 @@ i64 mirage_read_fn(mirage_msg *m, char *name, i64 *nlen, i64 nmax, i64 *argc) {
 		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	if(nmax > 0) {
-		fast_memcpy((u8 *) name, (u8 *) m->data + m->cursor, (size_t) L);
+		memcpy((u8 *) name, (u8 *) m->data + m->cursor, (size_t) L);
 	}
 	m->cursor += (i64) L;
 	*nlen = (i64) L;
@@ -707,7 +662,7 @@ static inline i64 _read_buf_(mirage_msg *m, i8 *dst, i64 *len, i64 max, i8 tag) 
 		return MIRAGE_ERR_BUFFERSIZE;
 	}
 	if(max > 0) {
-		fast_memcpy((u8 *) dst, (u8 *) m->data + m->cursor, (size_t) L);
+		memcpy((u8 *) dst, (u8 *) m->data + m->cursor, (size_t) L);
 	}
 	m->cursor += (i64) L;
 	*len = (i64) L;
@@ -855,7 +810,7 @@ i64 mirage_read_numericarray(mirage_msg *m, mirage_array_type *t, i64 *rank,
 		}
 	}
 	if(!skip_data) {
-		fast_memcpy((u8 *) data, (u8 *) m->data + m->cursor, (size_t) bytes);
+		memcpy((u8 *) data, (u8 *) m->data + m->cursor, (size_t) bytes);
 	}
 	*t = array_type;
 	*rank = (i64) r;
