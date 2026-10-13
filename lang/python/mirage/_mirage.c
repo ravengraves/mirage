@@ -94,19 +94,19 @@ static mirage_msg *(*p_mirage_create)(int64_t, void *(*)(size_t)) = NULL;
 static void (*p_mirage_destroy)(mirage_msg **, void (*)(void *)) = NULL;
 static int64_t (*p_mirage_write_start)(mirage_msg *) = NULL;
 static int64_t (*p_mirage_read_start)(mirage_msg *) = NULL;
-static int64_t (*p_mirage_write_fn)(mirage_msg *, char *, int64_t, int64_t) = NULL;
+static int64_t (*p_mirage_write_fn)(mirage_msg *, const char *, int64_t, int64_t) = NULL;
 static int64_t (*p_mirage_write_i8)(mirage_msg *, int8_t) = NULL;
 static int64_t (*p_mirage_write_i16)(mirage_msg *, int16_t) = NULL;
 static int64_t (*p_mirage_write_i32)(mirage_msg *, int32_t) = NULL;
 static int64_t (*p_mirage_write_i64)(mirage_msg *, int64_t) = NULL;
 static int64_t (*p_mirage_write_f64)(mirage_msg *, double) = NULL;
-static int64_t (*p_mirage_write_string)(mirage_msg *, char *, int64_t) = NULL;
-static int64_t (*p_mirage_write_bin)(mirage_msg *, uint8_t *, int64_t) = NULL;
-static int64_t (*p_mirage_write_sym)(mirage_msg *, char *, int64_t) = NULL;
-static int64_t (*p_mirage_write_bigint)(mirage_msg *, char *, int64_t) = NULL;
-static int64_t (*p_mirage_write_bigreal)(mirage_msg *, char *, int64_t) = NULL;
+static int64_t (*p_mirage_write_string)(mirage_msg *, const char *, int64_t) = NULL;
+static int64_t (*p_mirage_write_bin)(mirage_msg *, const uint8_t *, int64_t) = NULL;
+static int64_t (*p_mirage_write_sym)(mirage_msg *, const char *, int64_t) = NULL;
+static int64_t (*p_mirage_write_bigint)(mirage_msg *, const char *, int64_t) = NULL;
+static int64_t (*p_mirage_write_bigreal)(mirage_msg *, const char *, int64_t) = NULL;
 static int64_t (*p_mirage_write_numericarray)(mirage_msg *, mirage_array_type,
-					      int64_t, int64_t *, void *) = NULL;
+					      int64_t, const int64_t *, const void *) = NULL;
 static int64_t (*p_mirage_write_association)(mirage_msg *, int64_t) = NULL;
 static int64_t (*p_mirage_write_assoc_rule)(mirage_msg *) = NULL;
 
@@ -486,6 +486,25 @@ py_mirage_write_bigreal(PyObject *self, PyObject *args) {
 	return PyLong_FromLongLong(rc);
 }
 
+/* Both operands must be nonnegative. */
+static int
+checked_array_mul(int64_t a, int64_t b, int64_t *out) {
+#if defined(__GNUC__) || defined(__clang__)
+	return __builtin_mul_overflow(a, b, out);
+#else
+	if (b != 0 && a > INT64_MAX / b) return 1;
+	*out = a * b;
+	return 0;
+#endif
+}
+
+/* Preserve the C writer's existing exception class and message. */
+static PyObject *
+numericarray_write_error(int64_t rc) {
+	PyErr_Format(PyExc_RuntimeError, "mirage_write_numericarray failed: %lld", (long long)rc);
+	return NULL;
+}
+
 static PyObject *
 py_mirage_write_numericarray(PyObject *self, PyObject *args) {
 	PyObject *capsule, *dims_obj, *data_obj;
@@ -495,9 +514,11 @@ py_mirage_write_numericarray(PyObject *self, PyObject *args) {
 	if (!PyArg_ParseTuple(args, "OiOO", &capsule, &array_type, &dims_obj, &data_obj)) {
 		return NULL;
 	}
-
 	mirage_msg *msg = msg_from_capsule(capsule);
 	if (!msg) return NULL;
+	if ((unsigned)array_type >= sizeof(mirage_array_type_size)) {
+		return numericarray_write_error(MIRAGE_ERR_BADINPUT);
+	}
 
 	/* Parse dimensions list */
 	Py_ssize_t rank = PyList_Size(dims_obj);
@@ -512,24 +533,41 @@ py_mirage_write_numericarray(PyObject *self, PyObject *args) {
 		return NULL;
 	}
 
+	int64_t elements = 1; /* Rank zero is a scalar. */
 	for (Py_ssize_t i = 0; i < rank; i++) {
 		PyObject *item = PyList_GetItem(dims_obj, i);
 		dims[i] = PyLong_AsLongLong(item);
 		if (PyErr_Occurred()) return NULL;
+		if (dims[i] < 0) {
+			return numericarray_write_error(MIRAGE_ERR_BADINPUT);
+		}
+		if (checked_array_mul(elements, dims[i], &elements)) {
+			return numericarray_write_error(MIRAGE_ERR_BADINPUT);
+		}
+	}
+	int64_t data_bytes;
+	if (checked_array_mul(elements, p_mirage_array_type_size[array_type], &data_bytes)) {
+		return numericarray_write_error(MIRAGE_ERR_BADINPUT);
 	}
 
 	/* Get data buffer */
 	if (PyObject_GetBuffer(data_obj, &view, PyBUF_SIMPLE) < 0) {
 		return NULL;
 	}
+	if (data_bytes > view.len) {
+		PyBuffer_Release(&view);
+		PyErr_SetString(PyExc_ValueError, "data buffer is smaller than the declared array");
+		return NULL;
+	}
 
+	/* The C writer requires a non-NULL pointer even for an empty array. */
+	const void *data = data_bytes == 0 ? (const void *)"" : view.buf;
 	int64_t rc = p_mirage_write_numericarray(msg, (mirage_array_type)array_type,
-						 (int64_t)rank, dims, view.buf);
+						 (int64_t)rank, dims, data);
 	PyBuffer_Release(&view);
 
 	if (rc < 0) {
-		PyErr_Format(PyExc_RuntimeError, "mirage_write_numericarray failed: %lld", (long long)rc);
-		return NULL;
+		return numericarray_write_error(rc);
 	}
 	return PyLong_FromLongLong(rc);
 }
@@ -655,48 +693,32 @@ py_mirage_read_f64(PyObject *self, PyObject *arg) {
 	return PyFloat_FromDouble(value);
 }
 
+/* Skip-mode reads validate the complete element and finish at its end.
+ * Build Python values directly from that span instead of copying twice. */
+static const char *
+checked_read_payload(mirage_msg *msg, int64_t rc, int64_t length, const char *name) {
+	if (rc < 0) {
+		PyErr_Format(PyExc_RuntimeError, "%s failed: %lld", name, (long long)rc);
+		return NULL;
+	}
+	if (length > PY_SSIZE_T_MAX) {
+		PyErr_SetString(PyExc_OverflowError, "payload is too large for a Python object");
+		return NULL;
+	}
+	return (const char *)msg->data + (msg->cursor - length);
+}
+
 static PyObject *
 py_mirage_read_string(PyObject *self, PyObject *arg) {
 	mirage_msg *msg = msg_from_capsule(arg);
 	if (!msg) return NULL;
 
-	/* First, peek at the length by reading with max_length=-1 */
-	int64_t length;
-	int64_t saved_cursor = msg->cursor;
+	int64_t length = 0;
+	int64_t rc = p_mirage_read_string(msg, NULL, &length, MIRAGE_SKIP_COPY);
+	const char *data = checked_read_payload(msg, rc, length, "mirage_read_string");
+	if (!data) return NULL;
 
-	/* Skip the type byte */
-	msg->cursor++;
-
-	/* Read varint length - simple implementation */
-	length = 0;
-	int shift = 0;
-	uint8_t byte;
-	do {
-		byte = msg->data[msg->cursor++];
-		length |= (int64_t)(byte & 0x7F) << shift;
-		shift += 7;
-	} while (byte & 0x80);
-
-	/* Restore cursor and allocate buffer */
-	msg->cursor = saved_cursor;
-
-	char *buf = (char *)malloc(length + 1);
-	if (!buf) {
-		PyErr_NoMemory();
-		return NULL;
-	}
-
-	int64_t actual_len;
-	int64_t rc = p_mirage_read_string(msg, buf, &actual_len, length + 1);
-	if (rc < 0) {
-		free(buf);
-		PyErr_Format(PyExc_RuntimeError, "mirage_read_string failed: %lld", (long long)rc);
-		return NULL;
-	}
-
-	PyObject *result = PyUnicode_FromStringAndSize(buf, actual_len);
-	free(buf);
-	return result;
+	return PyUnicode_FromStringAndSize(data, (Py_ssize_t)length);
 }
 
 static PyObject *
@@ -704,43 +726,12 @@ py_mirage_read_bin(PyObject *self, PyObject *arg) {
 	mirage_msg *msg = msg_from_capsule(arg);
 	if (!msg) return NULL;
 
-	/* First, peek at the length */
-	int64_t length;
-	int64_t saved_cursor = msg->cursor;
+	int64_t length = 0;
+	int64_t rc = p_mirage_read_bin(msg, NULL, &length, MIRAGE_SKIP_COPY);
+	const char *data = checked_read_payload(msg, rc, length, "mirage_read_bin");
+	if (!data) return NULL;
 
-	/* Skip the type byte */
-	msg->cursor++;
-
-	/* Read varint length */
-	length = 0;
-	int shift = 0;
-	uint8_t byte;
-	do {
-		byte = msg->data[msg->cursor++];
-		length |= (int64_t)(byte & 0x7F) << shift;
-		shift += 7;
-	} while (byte & 0x80);
-
-	/* Restore cursor and allocate buffer */
-	msg->cursor = saved_cursor;
-
-	uint8_t *buf = (uint8_t *)malloc(length);
-	if (!buf) {
-		PyErr_NoMemory();
-		return NULL;
-	}
-
-	int64_t actual_len;
-	int64_t rc = p_mirage_read_bin(msg, buf, &actual_len, length);
-	if (rc < 0) {
-		free(buf);
-		PyErr_Format(PyExc_RuntimeError, "mirage_read_bin failed: %lld", (long long)rc);
-		return NULL;
-	}
-
-	PyObject *result = PyBytes_FromStringAndSize((char *)buf, actual_len);
-	free(buf);
-	return result;
+	return PyBytes_FromStringAndSize(data, (Py_ssize_t)length);
 }
 
 static PyObject *
@@ -748,43 +739,12 @@ py_mirage_read_sym(PyObject *self, PyObject *arg) {
 	mirage_msg *msg = msg_from_capsule(arg);
 	if (!msg) return NULL;
 
-	/* First, peek at the length */
-	int64_t length;
-	int64_t saved_cursor = msg->cursor;
+	int64_t length = 0;
+	int64_t rc = p_mirage_read_sym(msg, NULL, &length, MIRAGE_SKIP_COPY);
+	const char *data = checked_read_payload(msg, rc, length, "mirage_read_sym");
+	if (!data) return NULL;
 
-	/* Skip the type byte */
-	msg->cursor++;
-
-	/* Read varint length */
-	length = 0;
-	int shift = 0;
-	uint8_t byte;
-	do {
-		byte = msg->data[msg->cursor++];
-		length |= (int64_t)(byte & 0x7F) << shift;
-		shift += 7;
-	} while (byte & 0x80);
-
-	/* Restore cursor and allocate buffer */
-	msg->cursor = saved_cursor;
-
-	char *buf = (char *)malloc(length + 1);
-	if (!buf) {
-		PyErr_NoMemory();
-		return NULL;
-	}
-
-	int64_t actual_len;
-	int64_t rc = p_mirage_read_sym(msg, buf, &actual_len, length + 1);
-	if (rc < 0) {
-		free(buf);
-		PyErr_Format(PyExc_RuntimeError, "mirage_read_sym failed: %lld", (long long)rc);
-		return NULL;
-	}
-
-	PyObject *result = PyUnicode_FromStringAndSize(buf, actual_len);
-	free(buf);
-	return result;
+	return PyUnicode_FromStringAndSize(data, (Py_ssize_t)length);
 }
 
 static PyObject *
@@ -792,42 +752,16 @@ py_mirage_read_bigint(PyObject *self, PyObject *arg) {
 	mirage_msg *msg = msg_from_capsule(arg);
 	if (!msg) return NULL;
 
-	/* First, peek at the length */
-	int64_t length;
-	int64_t saved_cursor = msg->cursor;
+	int64_t length = 0;
+	int64_t rc = p_mirage_read_bigint(msg, NULL, &length, MIRAGE_SKIP_COPY);
+	const char *data = checked_read_payload(msg, rc, length, "mirage_read_bigint");
+	if (!data) return NULL;
 
-	/* Skip the type byte */
-	msg->cursor++;
-
-	/* Read varint length */
-	length = 0;
-	int shift = 0;
-	uint8_t byte;
-	do {
-		byte = msg->data[msg->cursor++];
-		length |= (int64_t)(byte & 0x7F) << shift;
-		shift += 7;
-	} while (byte & 0x80);
-
-	/* Restore cursor and allocate buffer */
-	msg->cursor = saved_cursor;
-
-	char *buf = (char *)malloc(length + 1);
-	if (!buf) {
-		PyErr_NoMemory();
-		return NULL;
-	}
-
-	int64_t actual_len;
-	int64_t rc = p_mirage_read_bigint(msg, buf, &actual_len, length + 1);
-	if (rc < 0) {
-		free(buf);
-		PyErr_Format(PyExc_RuntimeError, "mirage_read_bigint failed: %lld", (long long)rc);
-		return NULL;
-	}
-	buf[actual_len] = '\0';
-
-	/* Convert to Python int */
+	/* PyLong_FromString requires a NUL-terminated input. */
+	char *buf = (char *)malloc((size_t)length + 1);
+	if (!buf) return PyErr_NoMemory();
+	memcpy(buf, data, (size_t)length);
+	buf[length] = '\0';
 	PyObject *result = PyLong_FromString(buf, NULL, 10);
 	free(buf);
 	return result;
@@ -838,45 +772,12 @@ py_mirage_read_bigreal(PyObject *self, PyObject *arg) {
 	mirage_msg *msg = msg_from_capsule(arg);
 	if (!msg) return NULL;
 
-	/* First, peek at the length */
-	int64_t length;
-	int64_t saved_cursor = msg->cursor;
+	int64_t length = 0;
+	int64_t rc = p_mirage_read_bigreal(msg, NULL, &length, MIRAGE_SKIP_COPY);
+	const char *data = checked_read_payload(msg, rc, length, "mirage_read_bigreal");
+	if (!data) return NULL;
 
-	/* Skip the type byte */
-	msg->cursor++;
-
-	/* Read varint length */
-	length = 0;
-	int shift = 0;
-	uint8_t byte;
-	do {
-		byte = msg->data[msg->cursor++];
-		length |= (int64_t)(byte & 0x7F) << shift;
-		shift += 7;
-	} while (byte & 0x80);
-
-	/* Restore cursor and allocate buffer */
-	msg->cursor = saved_cursor;
-
-	char *buf = (char *)malloc(length + 1);
-	if (!buf) {
-		PyErr_NoMemory();
-		return NULL;
-	}
-
-	int64_t actual_len;
-	int64_t rc = p_mirage_read_bigreal(msg, buf, &actual_len, length + 1);
-	if (rc < 0) {
-		free(buf);
-		PyErr_Format(PyExc_RuntimeError, "mirage_read_bigreal failed: %lld", (long long)rc);
-		return NULL;
-	}
-	buf[actual_len] = '\0';
-
-	/* Return as string - caller can convert to Decimal if needed */
-	PyObject *result = PyUnicode_FromStringAndSize(buf, actual_len);
-	free(buf);
-	return result;
+	return PyUnicode_FromStringAndSize(data, (Py_ssize_t)length);
 }
 
 static PyObject *

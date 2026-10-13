@@ -114,6 +114,7 @@ check-analysis: compile_commands.json
 check: check-analysis sanitize-check
 
 check-python: $(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_read_py
+	python3 test/test_python_bounds.py
 	python3 test/test_write.py $(BUILD_DIR)/test_py2c.wxf
 	./$(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_py2c.wxf
 	./$(BUILD_DIR)/test_read_py $(BUILD_DIR)/test_c2py.wxf

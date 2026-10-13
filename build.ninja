@@ -38,7 +38,7 @@ rule run_check
   command = ./build/test && ./build/test_all && ./build/test_fuzz && ./build/test_embedded && touch $out
 
 rule run_check_python
-  command = python3 test/test_write.py build/test_py2c.wxf && ./build/test_write_py build/test_py2c.wxf && ./build/test_read_py build/test_c2py.wxf && python3 test/test_read.py build/test_c2py.wxf && touch $out
+  command = python3 test/test_python_bounds.py && python3 test/test_write.py build/test_py2c.wxf && ./build/test_write_py build/test_py2c.wxf && ./build/test_read_py build/test_c2py.wxf && python3 test/test_read.py build/test_c2py.wxf && touch $out
 
 rule run_check_js
   command = $node lang/js/test.mjs && touch $out
@@ -100,7 +100,7 @@ build build/mirage-embedded.pc: gen_pc docs/mirage-embedded.pc.in
 
 build build/.check.stamp: delegate_make | build
   target = check
-build build/.check_python.stamp: run_check_python | build/test_write_py build/test_read_py
+build build/.check_python.stamp: run_check_python | build/test_write_py build/test_read_py test/test_python_bounds.py lang/python/mirage/_mirage.c
 build build/.check_js.stamp: run_check_js | build/mirage.wasm
 build build/.install_lib.stamp: install_lib | build/libmirage.so build/libmirage.a build/libmirage_embedded.so build/libmirage_embedded.a build/mirage.pc build/mirage-embedded.pc
 build build/.install_docs.stamp: install_docs | build/docs/.stamp build/docs/mirage.3
