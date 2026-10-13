@@ -276,7 +276,7 @@ def _write_value(msg, obj: Any, depth: int = 0):
             _write_value(msg, value, depth + 1)
     elif HAS_NUMPY and isinstance(obj, np.ndarray):
         # Ensure contiguous C-order array
-        arr = np.ascontiguousarray(obj)
+        arr = obj if obj.flags.c_contiguous else np.ascontiguousarray(obj)
         dtype = arr.dtype
 
         if dtype not in _NUMPY_TO_MIRAGE:
@@ -284,7 +284,7 @@ def _write_value(msg, obj: Any, depth: int = 0):
 
         array_type = _NUMPY_TO_MIRAGE[dtype]
         dims = list(arr.shape) if arr.ndim > 0 else []
-        _c.write_numericarray(msg, array_type, dims, arr.tobytes())
+        _c.write_numericarray(msg, array_type, dims, arr)
     else:
         raise MirageError(f"Cannot encode type: {type(obj).__name__}")
 
@@ -356,9 +356,7 @@ def _read_value(msg, depth: int = 0) -> Any:
             raise MirageError(f"Unknown array type: {array_type}")
 
         arr = np.frombuffer(data, dtype=dtype)
-        if dims:
-            arr = arr.reshape(dims)
-        return arr
+        return arr.reshape(tuple(dims))
 
     elif etype == _c.ASSOCIATION:
         length = _c.read_association(msg)
@@ -429,7 +427,7 @@ def encode(obj: Any, buffer_size: int | None = None) -> bytes:
             _write_value(msg, obj)
             return _c.get_buffer(msg)
         except RuntimeError as e:
-            if "failed" in str(e) and buffer_size < 1024 * 1024 * 1024:  # Max 1GB
+            if getattr(e, "code", None) == _c.ERR_BUFFERSIZE and buffer_size < 1024 * 1024 * 1024:  # Max 1GB
                 buffer_size *= 2
             else:
                 raise
@@ -471,67 +469,69 @@ def decode(data: bytes | bytearray | memoryview) -> Any:
         >>> decode(encode(Expr('Plus', 1, 2)))
         Expr('Plus', 1, 2)
     """
-    if isinstance(data, memoryview):
-        data = bytes(data)
-    elif isinstance(data, bytearray):
-        data = bytes(data)
-
-    msg = _c.create(len(data))
+    data = _byte_view(data)
+    msg = _c.create(max(data.nbytes, 2))
     _c.set_buffer(msg, data)
     _c.read_start(msg)
     return _read_value(msg)
 
 
-def encode_to(obj: Any, buffer: bytearray | memoryview) -> int:
-    """Encode a Python object directly into an existing buffer.
+def _byte_view(buffer):
+    view = memoryview(buffer)
+    if not view.c_contiguous:
+        raise BufferError("buffer must be C-contiguous")
+    return view.cast('B')
 
-    This is useful for zero-copy integration with Quicksand.
+
+def encode_to(obj: Any, buffer: bytearray | memoryview) -> int:
+    """Encode a Python object and copy it into an existing writable buffer.
+
+    Encoding uses temporary message storage and bytes.
+    Serialization failures leave the destination unchanged.
 
     Args:
         obj: Python object to encode
-        buffer: Mutable buffer to write into
+        buffer: Writable C-contiguous buffer; capacity is measured in bytes
 
     Returns:
         Number of bytes written
 
     Raises:
-        MirageError: If encoding fails or buffer too small
+        RuntimeError: If encoding fails or buffer is too small
+        TypeError: If the buffer is read-only
+        BufferError: If the buffer is not C-contiguous
     """
-    msg = _c.create(len(buffer))
+    buffer = _byte_view(buffer)
+    if buffer.readonly:
+        raise TypeError("output buffer must be writable")
+    msg = _c.create(max(buffer.nbytes, 2))
     _c.write_start(msg)
     _write_value(msg, obj)
 
     data = _c.get_buffer(msg)
     length = len(data)
-
-    if isinstance(buffer, memoryview):
-        buffer[:length] = data
-    else:
-        buffer[:length] = data
-
+    if length > buffer.nbytes:
+        raise MirageError("output buffer is too small")
+    buffer[:length] = data
     return length
 
 
 def decode_from(buffer: bytes | bytearray | memoryview, length: int | None = None) -> Any:
-    """Decode a Python object from a buffer.
+    """Decode a Python object from a C-contiguous buffer.
 
-    This is useful for zero-copy integration with Quicksand.
+    Input is copied into owned message storage, and decoded values own their
+    payloads. 
+    Noncontiguous buffers are rejected.
 
     Args:
         buffer: Buffer containing WXF data
-        length: Number of valid bytes (defaults to len(buffer))
+        length: Valid byte count, between zero and buffer.nbytes (default)
 
     Returns:
         Decoded Python object
     """
-    if length is None:
-        length = len(buffer)
-
-    if isinstance(buffer, memoryview):
-        data = bytes(buffer[:length])
-    elif isinstance(buffer, bytearray):
-        data = bytes(buffer[:length])
-    else:
-        data = buffer[:length]
-
-    return decode(data)
+    buffer = _byte_view(buffer)
+    length = buffer.nbytes if length is None else int(length)
+    if not 0 <= length <= buffer.nbytes:
+        raise ValueError("length must be between zero and buffer byte capacity")
+    return decode(buffer[:length])

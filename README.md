@@ -149,6 +149,15 @@ Quick mapping:
 - `mirage.sym(name)` produces a Symbol. "Null"/"True"/"False" decode to `None`/`True`/`False`; other symbols decode to `mirage.Sym` (a `str` subclass).
 - `numpy.ndarray` round-trips as NumericArray with dtype and shape preserved.
 
+`encode_to` and `decode_from` accept C-contiguous buffers, including typed
+memoryviews; capacities and explicit lengths are measured in bytes. Output
+buffers must be writable. Noncontiguous buffers are rejected.
+These APIs are not zero-copy: encoding uses temporary message storage and copies
+the result through Python bytes into the destination, keeping it unchanged on
+serialization failure. Decoding copies input into owned message storage and
+creates independently owned payloads. Contiguous NumPy inputs pass directly to
+the C writer without an intermediate `tobytes()` copy.
+
 See the Python tests in `test/test_write.py` and `test/test_read.py` for fuller coverage.
 
 ## Build and Install 📖
