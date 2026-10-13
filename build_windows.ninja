@@ -48,8 +48,10 @@ build $builddir/test.exe: link_exe test/test.c
   lib = $builddir/libmirage.a
 build $builddir/test_all.exe: link_exe test/test_all.c
   lib = $builddir/libmirage.a
-build $builddir/test_fuzz.exe: link_exe test/test_fuzz.c
+build $builddir/test_fuzz.exe: link_exe test/test_fuzz.c | test/test_fuzz_message.h test/test_numericarray.h test/test_decode_contracts.h $builddir/libmirage.a
   lib = $builddir/libmirage.a
+build $builddir/test_fuzz_embedded.exe: link_exe test/test_fuzz_embedded.c | test/test_fuzz_message.h test/test_numericarray.h test/test_decode_contracts.h $builddir/libmirage_embedded.a
+  lib = $builddir/libmirage_embedded.a
 build $builddir/test_embedded.exe: link_exe test/test_embedded.c
   lib = $builddir/libmirage_embedded.a
 build $builddir/test_write_py.exe: link_exe test/test_write_py.c
@@ -83,7 +85,7 @@ build lib/pkgconfig/mirage.pc: copy_install $builddir/mirage.pc
 build lib/pkgconfig/mirage-embedded.pc: copy_install $builddir/mirage-embedded.pc
   destdir = lib/pkgconfig
 
-build all: phony $builddir/libmirage.a $builddir/libmirage_embedded.a $builddir/libmirage.dll $builddir/libmirage_embedded.dll $builddir/test.exe $builddir/test_all.exe $builddir/test_fuzz.exe $builddir/test_embedded.exe $builddir/test_write_py.exe $builddir/test_read_py.exe
+build all: phony $builddir/libmirage.a $builddir/libmirage_embedded.a $builddir/libmirage.dll $builddir/libmirage_embedded.dll $builddir/test.exe $builddir/test_all.exe $builddir/test_fuzz.exe $builddir/test_fuzz_embedded.exe $builddir/test_embedded.exe $builddir/test_write_py.exe $builddir/test_read_py.exe
 build dll: phony $builddir/libmirage.dll $builddir/libmirage_embedded.dll
 build install: phony lib/libmirage.a lib/libmirage.dll lib/libmirage.dll.a lib/libmirage_embedded.a lib/libmirage_embedded.dll lib/libmirage_embedded.dll.a include/mirage.h include/mirage_style.h include/mirage_embedded.h lib/pkgconfig/mirage.pc lib/pkgconfig/mirage-embedded.pc
 

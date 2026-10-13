@@ -35,7 +35,7 @@ rule wasm
   command = $wasm_cc --target=wasm32 -O2 -nostdlib -Wl,--no-entry -Wl,--export-dynamic -Wl,--initial-memory=2097152 -Wl,--max-memory=16777216 -Iinclude -o $out src/mirage_wasm.c
 
 rule run_check
-  command = ./build/test && ./build/test_all && ./build/test_fuzz && ./build/test_embedded && touch $out
+  command = ./build/test && ./build/test_all && ./build/test_fuzz && ./build/test_fuzz_embedded && ./build/test_embedded && touch $out
 
 rule run_check_python
   command = python3 test/test_python_bounds.py && python3 test/test_write.py build/test_py2c.wxf && ./build/test_write_py build/test_py2c.wxf && ./build/test_read_py build/test_c2py.wxf && python3 test/test_read.py build/test_c2py.wxf && touch $out
@@ -65,7 +65,7 @@ rule uninstall_docs
   command = prefix=$${PREFIX:-/usr/local}; dest=$${DESTDIR:-}; rm -f $$dest$$prefix/share/doc/mirage/*.md $$dest$$prefix/share/man/man3/mirage.3; rmdir $$dest$$prefix/share/doc/mirage 2>/dev/null || true; touch $out
 
 rule do_clean
-  command = rm -rf build build-sanitize && rm -f compile_commands.json $out
+  command = rm -rf build build-sanitize build-fuzz && rm -f compile_commands.json $out
 
 rule gen_compdb
   command = $ninja -f build.ninja -t compdb cc link_exe > $out
@@ -86,7 +86,8 @@ build build/libmirage_embedded.a: archive build/mirage_embedded.o
 
 build build/test: link_exe test/test.c build/libmirage.a | build
 build build/test_all: link_exe test/test_all.c build/libmirage.a | build
-build build/test_fuzz: link_exe test/test_fuzz.c build/libmirage.a | build
+build build/test_fuzz: link_exe test/test_fuzz.c build/libmirage.a | test/test_fuzz_message.h test/test_numericarray.h test/test_decode_contracts.h build
+build build/test_fuzz_embedded: link_exe test/test_fuzz_embedded.c build/libmirage_embedded.a | test/test_fuzz_message.h test/test_numericarray.h test/test_decode_contracts.h build
 build build/test_embedded: link_exe test/test_embedded.c build/libmirage_embedded.a | build
 build build/test_write_py: link_exe test/test_write_py.c build/libmirage.a | build
 build build/test_read_py: link_exe test/test_read_py.c build/libmirage.a | build
@@ -101,7 +102,7 @@ build build/mirage-embedded.pc: gen_pc docs/mirage-embedded.pc.in
 build build/.check.stamp: delegate_make | build
   target = check
 build build/.check_python.stamp: run_check_python | build/test_write_py build/test_read_py test/test_python_bounds.py lang/python/mirage/_mirage.c
-build build/.check_js.stamp: run_check_js | build/mirage.wasm
+build build/.check_js.stamp: run_check_js | build/mirage.wasm lang/js/test.mjs
 build build/.install_lib.stamp: install_lib | build/libmirage.so build/libmirage.a build/libmirage_embedded.so build/libmirage_embedded.a build/mirage.pc build/mirage-embedded.pc
 build build/.install_docs.stamp: install_docs | build/docs/.stamp build/docs/mirage.3
 build build/.uninstall_lib.stamp: uninstall_lib
@@ -116,10 +117,13 @@ build build/.fanalyzer.stamp: delegate_make | build
   target = fanalyzer
 build build/.sanitize_check.stamp: delegate_make | build
   target = sanitize-check
+build force_fuzz: phony
+build build/.fuzz_check.stamp: delegate_make | force_fuzz build
+  target = fuzz-check
 build build/.analysis.stamp: delegate_make | build
   target = analysis
 
-build all: phony build/libmirage.so build/libmirage.a build/libmirage_embedded.so build/libmirage_embedded.a build/test build/test_all build/test_fuzz build/test_embedded build/test_write_py build/test_read_py
+build all: phony build/libmirage.so build/libmirage.a build/libmirage_embedded.so build/libmirage_embedded.a build/test build/test_all build/test_fuzz build/test_fuzz_embedded build/test_embedded build/test_write_py build/test_read_py
 build check: phony build/.check.stamp
 build check-python: phony build/.check_python.stamp
 build wasm: phony build/mirage.wasm
@@ -136,6 +140,7 @@ build tidy: phony compile_commands.json build/.tidy.stamp
 build clang-analyze: phony build/.clang_analyze.stamp
 build fanalyzer: phony build/.fanalyzer.stamp
 build sanitize-check: phony build/.sanitize_check.stamp
+build fuzz-check: phony build/.fuzz_check.stamp
 build analysis: phony build/.analysis.stamp
 
 default all

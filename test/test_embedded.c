@@ -116,8 +116,7 @@ static void test_strlen_bounds(void) {
 	text[INT16_MAX] = '\0';
 
 	/* 32767 is representable, but does not fit this message buffer. */
-	for(size_t i = 0; i < sizeof(writers) / sizeof(
-		[0]); ++i) {
+	for(size_t i = 0; i < sizeof(writers) / sizeof(writers[0]); ++i) {
 		assert(writers[i](&msg, text, MIRAGE_STRLEN) == MIRAGE_ERR_BUFFERSIZE);
 	}
 	assert(mirage_write_fn(&msg, text, MIRAGE_STRLEN, 0) == MIRAGE_ERR_BUFFERSIZE);

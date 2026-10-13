@@ -56,6 +56,14 @@ When decoding untrusted input, bound all output sizes. In particular,
 matches the destination buffer. Callers that only need metadata may use the
 library's skip-data mode macros from the header.
 
+String-like readers and function-name reads use _MIRAGE_SKIP_COPY_ (-1) to
+skip copying. A zero capacity accepts only an empty value. Positive capacities
+require a destination; capacities below -1 are invalid. Numeric-array dimensions
+and payloads are skipped independently with _max_rank_ == -1 and
+_max_bytes_ == _MIRAGE_SKIP_DATA_. Failed reads leave the cursor and outputs
+unchanged. Wrong tags and malformed encodings return _MIRAGE_ERR_BADDATA_;
+truncation and insufficient output capacity return _MIRAGE_ERR_BUFFERSIZE_.
+
 # EXAMPLE
 
 ```

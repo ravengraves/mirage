@@ -101,6 +101,15 @@ class StringReadBounds(unittest.TestCase):
 
 
 class NumericWriteBounds(unittest.TestCase):
+    def test_packed_array_dispatch(self):
+        import numpy as np
+
+        wire = b"8:\xc1\x02\x01\x02\x2a\x00\x00\x00\xff\xff\xff\xff"
+        result = mirage.decode(wire)
+        self.assertEqual(result.dtype, np.dtype("int32"))
+        self.assertEqual(result.shape, (2,))
+        self.assertEqual(result.tolist(), [42, -1])
+
     def assert_rejected(self, array_type, dims, data, error):
         msg = c.create(512)
         before = c.get_buffer(msg)

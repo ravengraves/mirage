@@ -63,6 +63,108 @@ async function runTests() {
 
     console.log('WASM loaded successfully\n');
 
+    // Exercise the exported C wrapper directly to retain all 32 capacity bits.
+    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const wasm = instance.exports;
+    function checkNumericRead(dimsSize, dataSize, expected, {
+        wire = [56, 58, 0xC2, 0x10, 2, 1, 1, 42],
+        dims = [1, 1], data = [42], nullOutputs = 0,
+    } = {}) {
+        wasm.wasm_reset();
+        const msg = wasm.wasm_create(wire.length);
+        const memory = new Uint8Array(wasm.memory.buffer);
+        memory.set(wire, wasm.wasm_msg_data(msg));
+        wasm.wasm_msg_set_length(msg, wire.length);
+        assertEqual(wasm.wasm_read_start(msg), 2);
+        const dimsBytes = dimsSize >= 0 && dimsSize <= 32767 ? Math.max(6, dimsSize * 2) : 6;
+        const dataBytes = dataSize >= 0 && dataSize <= 32767 ? Math.max(2, dataSize) : 2;
+        const typePtr = wasm.malloc(4), rankPtr = wasm.malloc(4);
+        const dimsPtr = wasm.malloc(dimsBytes), dataPtr = wasm.malloc(dataBytes);
+        const outputs = [
+            memory.subarray(typePtr, typePtr + 4), memory.subarray(rankPtr, rankPtr + 4),
+            memory.subarray(dimsPtr, dimsPtr + dimsBytes), memory.subarray(dataPtr, dataPtr + dataBytes),
+        ];
+        outputs.forEach(out => out.fill(0xA5));
+        const before = outputs.map(out => out.slice());
+        const ret = wasm.wasm_read_numericarray(msg,
+            nullOutputs & 1 ? 0 : typePtr, nullOutputs & 2 ? 0 : rankPtr,
+            nullOutputs & 4 ? 0 : dimsPtr, dimsSize,
+            nullOutputs & 8 ? 0 : dataPtr, dataSize);
+        assertEqual(ret, expected);
+        assertEqual(wasm.wasm_msg_length(msg), wire.length);
+        if (expected < 0) {
+            assertEqual(wasm.wasm_msg_cursor(msg), 2);
+            outputs.forEach((out, i) => assertArrayEqual(out, before[i]));
+        } else {
+            assertEqual(wasm.wasm_msg_cursor(msg), wire.length);
+            new DataView(before[0].buffer).setInt32(0, 4, true); // MIRAGE_ARRAY_U8
+            new DataView(before[1].buffer).setInt32(0, dims.length, true);
+            if (dimsSize !== -1) {
+                const view = new DataView(before[2].buffer);
+                dims.forEach((dim, i) => view.setInt16(i * 2, dim, true));
+            }
+            if (dataSize !== -1) before[3].set(data);
+            outputs.forEach((out, i) => assertArrayEqual(out, before[i]));
+        }
+    }
+
+    console.log('WASM numeric array capacities:');
+    test('Packed arrays dispatch through the numeric reader', () => {
+        const wire = new Uint8Array([56, 58, 0xC1, 0x02, 1, 2, 42, 0, 0, 0, 255, 255, 255, 255]);
+        const result = mirage.decode(wire);
+        assert(result instanceof Int32Array);
+        assertArrayEqual(result, [42, -1]);
+    });
+    test('Independent skips and maximum capacities', () => {
+        for (const dimsSize of [-1, 2, 32767]) {
+            for (const dataSize of [-1, 1, 32767]) {
+                checkNumericRead(dimsSize, dataSize, 6);
+                const nullOutputs = (dimsSize === -1 ? 4 : 0) | (dataSize === -1 ? 8 : 0);
+                checkNumericRead(dimsSize, dataSize, 6, { nullOutputs });
+            }
+        }
+    });
+    test('Scalar and empty arrays allow zero capacities', () => {
+        for (const dimsSize of [-1, 0]) {
+            for (const dataSize of [-1, 1]) {
+                checkNumericRead(dimsSize, dataSize, 4, {
+                    wire: [56, 58, 0xC2, 0x10, 0, 42], dims: [], nullOutputs: 4,
+                });
+            }
+        }
+        checkNumericRead(1, 0, 4, {
+            wire: [56, 58, 0xC2, 0x10, 1, 0], dims: [0], data: [],
+        });
+    });
+    test('Reject capacities before narrowing to int16', () => {
+        const invalid = [-2147483648, -65537, -65536, -32769, -2,
+                         32768, 65535, 65536, 65537, 2147483647];
+        for (const size of invalid) {
+            for (const dataSize of [-1, 1]) checkNumericRead(size, dataSize, -4);
+            for (const dimsSize of [-1, 2]) checkNumericRead(dimsSize, size, -4);
+        }
+    });
+    test('Capacity and NULL errors preserve every output', () => {
+        for (const [dimsSize, dataSize] of [[0, 1], [1, 1], [0, -1], [1, -1], [2, 0], [-1, 0]]) {
+            checkNumericRead(dimsSize, dataSize, -2);
+        }
+        for (const nullOutputs of [1, 2, 4, 8]) checkNumericRead(2, 1, -4, { nullOutputs });
+        checkNumericRead(2, -1, -4, { nullOutputs: 4 });
+        checkNumericRead(-1, 1, -4, { nullOutputs: 8 });
+        checkNumericRead(-1, -1, -4, { nullOutputs: 1 });
+        checkNumericRead(-1, -1, -4, { nullOutputs: 2 });
+    });
+    test('Malformed arrays preserve every output in all skip modes', () => {
+        for (const dimsSize of [-1, 2]) {
+            for (const dataSize of [-1, 1]) {
+                checkNumericRead(dimsSize, dataSize, -2, { wire: [56, 58, 0xC2, 0x10, 2, 1, 1] });
+                checkNumericRead(dimsSize, dataSize, -2, { wire: [56, 58, 0xC2, 0x10, 2, 1] });
+                checkNumericRead(dimsSize, dataSize, -1, { wire: [56, 58, 0xC2, 0x10, 2, 0x80, 0x80, 1, 2] });
+                checkNumericRead(dimsSize, dataSize, -1, { wire: [56, 58, 0xC2, 0xFF, 0] });
+            }
+        }
+    });
+
     // ========================================
     console.log('Basic Types:');
     // ========================================

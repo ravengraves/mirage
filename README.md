@@ -22,6 +22,27 @@ microcontrollers, keep these caps at `INT16_MAX` (32767) or smaller.
 `MIRAGE_MAX_TENSOR_BYTES` defines a desktop-scale reference limit (two 8k RGBA
 frames).
 
+## C reader compatibility
+
+String, binary, symbol, bigint, bigreal, and function-name readers use `-1`
+(`MIRAGE_SKIP_COPY`) to skip copying while validating and consuming the value.
+Zero is an actual capacity and accepts only an empty value. Positive
+capacities require a destination, and capacities below `-1` are invalid.
+Numeric array reads can independently skip reading dimensions 
+(with `max_rank == -1`) and payloads (with `max_bytes == MIRAGE_SKIP_COPY`).
+
+Failed reads preserve the entry cursor and all outputs. Invalid arguments return
+`MIRAGE_ERR_BADINPUT`; truncated input or insufficient capacity returns
+`MIRAGE_ERR_BUFFERSIZE`; wrong tags, overflowing varints and malformed encodings
+return `MIRAGE_ERR_BADDATA`. Varints accept the inclusive signed maximum in at
+most nine bytes (standard) or three bytes (embedded).
+Any zero array dimension makes the payload empty.
+`mirage_create` requires at least two bytes for the message header.
+
+Only `MIRAGE_NUMERICARRAY` and `MIRAGE_RULE` are written/decoded
+(`PACKEDARRAY` / `RULE_DELAYED` are transformed because this implementation 
+focuses on simple data representation rather than full WXF compatibility).
+
 ## Example (C) 🚀
 ```C
 #include "mirage.h"
@@ -123,8 +144,8 @@ assert round_trip[9] == mirage.sym("Global`mySymbol")
 ```
 
 Quick mapping:
-- `list` and `tuple` → WXF List. Use `mirage.expr(name, *args)` for functions instead of tuples.
-- Plain `int` → i64 (or BigInt if outside 64‑bit). Use `mirage.i8/i16/i32` to force width.
+- `list` and `tuple` -> WXF List. Use `mirage.expr(name, *args)` for functions instead of tuples.
+- Plain `int` -> i64 (or BigInt if outside 64-bit). Use `mirage.i8/i16/i32` to force width.
 - `mirage.sym(name)` produces a Symbol. "Null"/"True"/"False" decode to `None`/`True`/`False`; other symbols decode to `mirage.Sym` (a `str` subclass).
 - `numpy.ndarray` round-trips as NumericArray with dtype and shape preserved.
 
@@ -156,6 +177,26 @@ make analysis
 ```
 
 `make sanitize-check` rebuilds into `build-sanitize/` with Clang ASan+UBSan and reruns the core C test suite from `make check`, leaving the normal `build/` directory alone.
+
+The fuzz-style tests include invalid message pointers/fields for both APIs and
+embedded array regressions for NULL destinations, negative capacities, skip
+modes, and unaligned buffers. The embedded array tests check all 12 types
+against independently constructed wire bytes, including scalar and empty arrays.
+
+Optional libFuzzer targets exercise numeric-array readers and writers in both
+implementations with ASan/UBSan. Clang with libFuzzer and Python 3 are required:
+
+```
+make fuzz-check
+make fuzz-check FUZZ_SECONDS=60 FUZZ_SEED=20261013
+```
+
+The default runs each of four targets for ten seconds. Deterministic seeds,
+evolved corpora and failure artifacts live in `build-fuzz/`; remove that directory
+to start with fresh corpora. Replay a failure by passing its artifact path to
+the matching `build-fuzz/read_standard`, `read_embedded`, `write_standard`, or
+`write_embedded` executable. Time-limited fuzzing does not guarantee exhaustive
+coverage or identical run counts.
 
 ## License ⚖
 

@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "test_fuzz_message.h"
+#include "test_numericarray.h"
+#include "test_decode_contracts.h"
 
 typedef struct {
 	u8 *data;
@@ -249,6 +252,12 @@ static void build_numeric_packet(wbuf *buf, u8 tag, u8 enc, u64 rank,
 }
 
 int main(void) {
+	test_numericarray();
+	test_decode_contracts();
+	test_message_null_data_read();
+	test_message_null_data_write();
+	test_invalid_message_states();
+	test_message_init_and_boundaries();
 	u8 storage[256];
 	wbuf buf;
 
@@ -457,7 +466,7 @@ int main(void) {
 				       1, 64);
 	expect_numeric_error_null_dims("numeric_null_dims", valid_numeric, valid_numeric_len,
 				       1, 64);
-	expect_numeric_error("numeric_negative_max_rank", valid_numeric, valid_numeric_len, -1, 64);
+	expect_numeric_error("numeric_negative_max_rank", valid_numeric, valid_numeric_len, -2, 64);
 	expect_numeric_error("numeric_negative_max_bytes", valid_numeric, valid_numeric_len, 1, -2);
 
 	printf("Fuzz-style invalid decode tests passed.\n");

@@ -16,6 +16,15 @@
  * determine string length with strlen(), or MIRAGE_SKIP_COPY (-1) to skip
  * copying data during reads.
  *
+ * @note Message operations require a live mirage_msg with non-NULL data and
+ *        0 <= cursor <= length <= max_length. Readers, writers, peek and reset
+ *        reject invalid state with MIRAGE_ERR_BADINPUT without changing it;
+ *        mirage_remaining returns 0. The caller must provide storage of at
+ *        least max_length bytes and keep it alive; validation cannot verify
+ *        allocation size, lifetime, or non-NULL pointer validity. Other buffer
+ *        arguments must likewise cover their declared sizes, and typed pointer
+ *        arguments must have the alignment required by their types.
+ *
  * @section example_basic Basic Encoding/Decoding Example
  *
  * @code
@@ -218,8 +227,8 @@ typedef enum {
 /** @brief Special length value for array reads: skip copying array data.
  *
  *  Use this value for max_bytes in mirage_read_numericarray to read
- *  only the array metadata (type, rank, dimensions) without copying
- *  the element data.
+ *  array metadata without copying the element data. Dimensions are copied
+ *  when max_rank is not -1.
  */
 #define MIRAGE_SKIP_DATA (-1)
 
@@ -244,6 +253,8 @@ typedef enum {
  *  @param msg         Pointer to the mirage_msg structure to initialize.
  *  @param buffer      Pointer to the data buffer.
  *  @param buffer_size Size of the buffer in bytes (must be > 0).
+ *  @note A NULL buffer or nonpositive size clears msg to an invalid, empty
+ *        state. A NULL msg is ignored. Reinitialize with valid storage to use it.
  */
 void mirage_init(mirage_msg *msg, uint8_t *buffer, int64_t buffer_size);
 
@@ -252,7 +263,7 @@ void mirage_init(mirage_msg *msg, uint8_t *buffer, int64_t buffer_size);
  *  Allocates a mirage_msg structure and a data buffer of the given
  *  size using the provided allocation callback.
  *
- *  @param buffer_size Size of the data buffer in bytes (must be > 0).
+ *  @param buffer_size Size of the data buffer in bytes (must be >= 2 for the header).
  *  @param alloc      Allocation callback with malloc-compatible signature:
  *                    - Must return aligned memory suitable for any type
  *                    - Must return NULL on failure
@@ -378,6 +389,7 @@ int64_t mirage_write_bigreal(mirage_msg *msg, const char *value, int64_t length)
  *  @param array_type  Type of elements in the array.
  *  @param rank        Number of dimensions (0 for scalar)
  *  @param dims        Array of dimension sizes (length = @p rank).
+ *                     Any zero dimension makes the payload empty, regardless of order.
  *  @param data        Pointer to the raw element data.
  *  @return Number of bytes written or negative error code.
  */
@@ -394,6 +406,11 @@ int64_t mirage_write_assoc_rule(mirage_msg *msg);
 
 /* -------------------------------------------------------------------------- */
 /** @name Read Functions
+ *  Readers leave the entry cursor and all outputs unchanged on error.
+ *  Invalid arguments return MIRAGE_ERR_BADINPUT; insufficient capacity or
+ *  truncated input returns MIRAGE_ERR_BUFFERSIZE; malformed encodings and wrong
+ *  tags return MIRAGE_ERR_BADDATA. Varints support 0 through INT64_MAX in at most
+ *  nine bytes; nonminimal encodings within that width are accepted.
  *  @{
  */
 
@@ -407,9 +424,12 @@ int64_t mirage_read_start(mirage_msg *msg);
  *  @param msg             Pointer to the message buffer.
  *  @param name            Buffer to receive the function name.
  *  @param name_length     Pointer to receive the length of the name.
- *  @param max_name_length Maximum buffer size for @p name.
- *  @param argc            Pointer to receive the argument count.
+ *  @param max_name_length Capacity in bytes, or MIRAGE_SKIP_COPY (-1) to skip the name.
+ *  @param argc            Optional pointer to receive the argument count.
  *  @return Number of bytes read or negative error code.
+ *  @note name_length is required. name is required for positive capacity;
+ *        with zero capacity, only an empty name fits and name may be NULL.
+ *        Skipping still validates and consumes the entire name.
  */
 int64_t mirage_read_fn(mirage_msg *msg, char *name, int64_t *name_length,
 		       int64_t max_name_length, int64_t *argc);
@@ -439,6 +459,10 @@ int64_t mirage_read_f64(mirage_msg *msg, double *value);
  *
  *  @note When max_length is MIRAGE_SKIP_COPY, only the cursor advances and
  *        length is populated; no data is copied to value.
+ *        Zero is an actual capacity: only an empty value fits. value is required
+ *        for positive capacity; length is always required. Capacities below -1
+ *        are invalid. These rules also apply to binary, symbol, bigint and
+ *        bigreal readers. Returned text is not NUL-terminated.
  */
 int64_t mirage_read_string(mirage_msg *msg, char *value, int64_t *length, int64_t max_length);
 
@@ -459,14 +483,20 @@ int64_t mirage_read_bigreal(mirage_msg *msg, char *value, int64_t *length, int64
  *  @param msg         Pointer to the message buffer.
  *  @param array_type  Pointer to receive the element type.
  *  @param rank        Pointer to receive the number of dimensions.
- *  @param dims        Buffer to receive the dimension sizes.
- *  @param max_rank    Maximum number of dimensions the caller can accept.
- *  @param data        Buffer to receive raw element data (may be NULL if max_bytes is MIRAGE_SKIP_DATA).
+ *  @param dims        Buffer to receive dimension sizes; required when max_rank is positive.
+ *  @param max_rank    Dimension capacity, or -1 to skip copying dimensions.
+ *  @param data        Buffer to receive raw element data; required unless max_bytes is
+ *                     MIRAGE_SKIP_DATA, even for an empty array.
  *  @param max_bytes   Maximum buffer size, or MIRAGE_SKIP_DATA (-1) to skip copying array elements.
  *  @return Number of bytes read or negative error code.
  *
- *  @note When max_bytes is MIRAGE_SKIP_DATA, only metadata (type, rank, dims) is read;
- *        array element data is skipped and not copied to data buffer.
+ *  @note The two skip sentinels are independent. Skipped buffers may be NULL and
+ *        are not modified. With max_rank == 0, dims may be NULL for a scalar.
+ *        Type and rank are always required and returned on success. The full
+ *        encoded array is validated and consumed even when outputs are skipped.
+ *        Capacities below -1 return MIRAGE_ERR_BADINPUT; insufficient dimension
+ *        or payload capacity returns MIRAGE_ERR_BUFFERSIZE. On error, the cursor
+ *        and all output buffers are unchanged.
  */
 int64_t mirage_read_numericarray(mirage_msg *msg, mirage_array_type *array_type,
 				 int64_t *rank, int64_t *dims, int64_t max_rank, void *data, int64_t max_bytes);
@@ -489,6 +519,8 @@ int64_t mirage_read_assoc_rule(mirage_msg *msg);
  *  @param msg Pointer to the message buffer.
  *  @param e   Pointer to receive the element type.
  *  @return 1 (bytes inspected) on success, or negative error code.
+ *  @note Packed-array tags return MIRAGE_NUMERICARRAY and delayed-rule tags
+ *        return MIRAGE_RULE. On error, the output is unchanged.
  */
 int64_t mirage_peek_element_type(mirage_msg *msg, mirage_element_type *e);
 

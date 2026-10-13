@@ -14,6 +14,11 @@ SANITIZERS ?= address,undefined
 SANITIZER_CFLAGS ?= -fsanitize=$(SANITIZERS) -fno-omit-frame-pointer
 SANITIZER_LDFLAGS ?= -fsanitize=$(SANITIZERS)
 SANITIZE_BUILD_DIR ?= build-sanitize
+FUZZ_BUILD_DIR ?= build-fuzz
+FUZZ_SECONDS ?= 10
+FUZZ_SEED ?= 20261013
+FUZZ_FLAGS := -O3 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
+FUZZ_EXES := $(addprefix $(FUZZ_BUILD_DIR)/,read_standard read_embedded write_standard write_embedded)
 
 BUILD_DIR := build
 DOC_DIR := docs
@@ -47,12 +52,12 @@ PC_FILE := $(BUILD_DIR)/mirage.pc
 PC_EMBEDDED_FILE := $(BUILD_DIR)/mirage-embedded.pc
 
 ALL_EXES := $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz \
-	$(BUILD_DIR)/test_embedded $(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_read_py
+	$(BUILD_DIR)/test_fuzz_embedded $(BUILD_DIR)/test_embedded $(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_read_py
 TEST_SOURCES := test/test.c test/test_all.c test/test_fuzz.c test/test_embedded.c \
-	test/test_write_py.c test/test_read_py.c
+	test/test_fuzz_embedded.c test/test_write_py.c test/test_read_py.c
 ANALYZE_SOURCES := src/mirage.c src/mirage_embedded.c $(TEST_SOURCES)
 
-.PHONY: all test check check-runtime check-analysis check-python check-js wasm clean docs install-lib install-docs install uninstall-lib uninstall-docs uninstall python tidy clang-analyze fanalyzer sanitize-check analysis
+.PHONY: all test check check-runtime check-analysis check-python check-js wasm clean docs install-lib install-docs install uninstall-lib uninstall-docs uninstall python tidy clang-analyze fanalyzer sanitize-check fuzz-check analysis
 
 all: $(LIB_SHARED) $(LIB_STATIC) $(EMBEDDED_SHARED) $(EMBEDDED_STATIC) $(ALL_EXES)
 
@@ -83,8 +88,11 @@ $(BUILD_DIR)/test: test/test.c $(LIB_STATIC) | $(BUILD_DIR)
 $(BUILD_DIR)/test_all: test/test_all.c $(LIB_STATIC) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(BUILD_DIR)/test_fuzz: test/test_fuzz.c $(LIB_STATIC) | $(BUILD_DIR)
+$(BUILD_DIR)/test_fuzz: test/test_fuzz.c test/test_fuzz_message.h test/test_numericarray.h test/test_decode_contracts.h $(LIB_STATIC) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(BUILD_DIR)/test_fuzz_embedded: test/test_fuzz_embedded.c test/test_fuzz_message.h test/test_numericarray.h test/test_decode_contracts.h $(EMBEDDED_STATIC) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(EMBEDDED_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(BUILD_DIR)/test_embedded: test/test_embedded.c $(EMBEDDED_STATIC) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(EMBEDDED_STATIC) $(LDFLAGS) $(LDLIBS) -o $@
@@ -97,10 +105,11 @@ $(BUILD_DIR)/test_read_py: test/test_read_py.c $(LIB_STATIC) | $(BUILD_DIR)
 
 test: $(ALL_EXES)
 
-check-runtime: $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz $(BUILD_DIR)/test_embedded
+check-runtime: $(BUILD_DIR)/test $(BUILD_DIR)/test_all $(BUILD_DIR)/test_fuzz $(BUILD_DIR)/test_fuzz_embedded $(BUILD_DIR)/test_embedded
 	./$(BUILD_DIR)/test
 	./$(BUILD_DIR)/test_all
 	./$(BUILD_DIR)/test_fuzz
+	./$(BUILD_DIR)/test_fuzz_embedded
 	./$(BUILD_DIR)/test_embedded
 
 check-analysis: compile_commands.json
@@ -150,6 +159,28 @@ sanitize-check:
 		check-runtime
 
 analysis: check-analysis
+
+$(FUZZ_BUILD_DIR):
+	mkdir -p $@
+
+$(FUZZ_BUILD_DIR)/read_standard: test/fuzz_numericarray.c src/mirage.c include/mirage.h | $(FUZZ_BUILD_DIR)
+	$(CLANG) $(CPPFLAGS) $(FUZZ_FLAGS) test/fuzz_numericarray.c src/mirage.c -o $@
+
+$(FUZZ_BUILD_DIR)/read_embedded: test/fuzz_numericarray.c src/mirage_embedded.c include/mirage_embedded.h | $(FUZZ_BUILD_DIR)
+	$(CLANG) $(CPPFLAGS) $(FUZZ_FLAGS) -DEMBEDDED test/fuzz_numericarray.c src/mirage_embedded.c -o $@
+
+$(FUZZ_BUILD_DIR)/write_standard: test/fuzz_numericarray.c src/mirage.c include/mirage.h | $(FUZZ_BUILD_DIR)
+	$(CLANG) $(CPPFLAGS) $(FUZZ_FLAGS) -DFUZZ_WRITER test/fuzz_numericarray.c src/mirage.c -o $@
+
+$(FUZZ_BUILD_DIR)/write_embedded: test/fuzz_numericarray.c src/mirage_embedded.c include/mirage_embedded.h | $(FUZZ_BUILD_DIR)
+	$(CLANG) $(CPPFLAGS) $(FUZZ_FLAGS) -DEMBEDDED -DFUZZ_WRITER test/fuzz_numericarray.c src/mirage_embedded.c -o $@
+
+fuzz-check: $(FUZZ_EXES)
+	python3 test/seed_numericarray_fuzz.py $(FUZZ_BUILD_DIR)
+	set -e; for exe in $(FUZZ_EXES); do \
+		$$exe $${exe}_corpus -max_total_time=$(FUZZ_SECONDS) -max_len=1024 \
+			-seed=$(FUZZ_SEED) -artifact_prefix=$(FUZZ_BUILD_DIR)/; \
+	done
 
 $(BUILD_DIR)/mirage.wasm: src/mirage_wasm.c src/mirage_embedded.c include/mirage_embedded.h | $(BUILD_DIR)
 	$(WASM_CC) --target=wasm32 -O2 -nostdlib \
@@ -229,5 +260,5 @@ python: $(LIB_SHARED)
 	cd lang/python && { pip install --break-system-packages -e .; } || { pip install -e .; }
 
 clean:
-	rm -rf $(BUILD_DIR) $(SANITIZE_BUILD_DIR)
+	rm -rf $(BUILD_DIR) $(SANITIZE_BUILD_DIR) $(FUZZ_BUILD_DIR)
 	rm -f compile_commands.json

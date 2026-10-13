@@ -245,12 +245,18 @@ WASM_EXPORT int32_t wasm_read_assoc_rule(mirage_msg *msg) {
 WASM_EXPORT int32_t wasm_read_numericarray(mirage_msg *msg, int32_t *atype_out, int32_t *rank_out,
 					   int16_t *dims_out, int32_t dims_size,
 					   void *data_out, int32_t data_size) {
+	if(!atype_out || !rank_out || dims_size < -1 || dims_size > INT16_MAX
+		|| data_size < MIRAGE_SKIP_DATA || data_size > INT16_MAX) {
+		return MIRAGE_ERR_BADINPUT;
+	}
 	mirage_array_type atype;
 	int16_t rank = 0;
 	int16_t ret = mirage_read_numericarray(msg, &atype, &rank, dims_out,
 					       (int16_t) dims_size, data_out, (int16_t) data_size);
-	*atype_out = (int32_t) atype;
-	*rank_out = (int32_t) rank;
+	if(ret >= 0) {
+		*atype_out = (int32_t) atype;
+		*rank_out = (int32_t) rank;
+	}
 	return (int32_t) ret;
 }
 
