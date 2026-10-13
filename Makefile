@@ -123,9 +123,9 @@ check-analysis: compile_commands.json
 
 # C runtime regressions, advisory static analysis, and ASan/UBSan.
 # Python bindings remain separate; timed libFuzzer runs are opt-in.
-check: check-runtime check-analysis sanitize-check
+check: check-runtime sanitize-check
 
-check-slow: check fuzz-check
+check-slow: check check-analysis fuzz-check
 
 check-python: $(BUILD_DIR)/test_write_py $(BUILD_DIR)/test_read_py
 	python3 test/test_python_bounds.py
