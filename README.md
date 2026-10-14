@@ -1,4 +1,7 @@
 # Mirage 🔮
+
+[![Mirage CI](https://github.com/ravengraves/mirage/actions/workflows/ci.yml/badge.svg)](https://github.com/ravengraves/mirage/actions/workflows/ci.yml)
+
 Mirage is a serialization/deserialization library using [a flexible binary self-describing data format](wxf.md) for transmitting robot thoughts.
 
 ## WXF Data Format 🖼
