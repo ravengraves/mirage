@@ -170,6 +170,11 @@ make check
 sudo make install
 ```
 
+Install documentation separately (requires `scdoc`):
+```sh
+sudo make install-docs
+```
+
 Uninstall
 ```
 sudo make uninstall
